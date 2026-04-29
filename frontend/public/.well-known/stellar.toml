@@ -50,5 +50,5 @@ conditions = "Native utility token of the Skyhitz Gravity platform; staking, swa
 image = "https://skyhitz.io/icon.png"
 is_asset_anchored = false
 is_unlimited = false
-max_number = 21000000
+max_number = 100000000
 
