@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build && node scripts/copy-well-known.mjs",
     "start": "next start",
     "lint": "eslint",
     "send:legacy-reparation": "node scripts/send-legacy-reparation.mjs"
