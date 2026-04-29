@@ -1,0 +1,54 @@
+# Stellar Info File for Skyhitz
+# This file provides metadata about the HITZ asset and Skyhitz organization
+# for Stellar Expert and other Stellar ecosystem services.
+# 
+# Reference: https://developers.stellar.org/docs/tokens/publishing-asset-info
+
+# Account Information
+# Replace with your actual ISSUER_ID from environment
+ACCOUNTS = [
+    "GCAETBNBFKVGLYFXKCLMKT6ZVHFXHRSDFSEW7ODIUJYC6R7H2QJ6OKGU"
+]
+
+# Organization Information
+[DOCUMENTATION]
+ORG_NAME = "Skyhitz"
+ORG_URL = "https://skyhitz.io"
+ORG_LOGO = "https://skyhitz.io/icon.png"
+ORG_DESCRIPTION = "Decentralized music platform on Stellar. Discover, stake, and earn from independent music."
+ORG_OFFICIAL_EMAIL = "support@skyhitz.io"
+ORG_TWITTER = "skyhitz"
+
+# Point of Contact Documentation
+[[PRINCIPALS]]
+name = "Skyhitz Team"
+email = "support@skyhitz.io"
+
+# Asset: HITZ Token (Classic Stellar asset — legacy)
+[[CURRENCIES]]
+code = "HITZ"
+issuer = "GCAETBNBFKVGLYFXKCLMKT6ZVHFXHRSDFSEW7ODIUJYC6R7H2QJ6OKGU"
+display_decimals = 7
+name = "Skyhitz Token"
+desc = "Legacy Platform token for staking and rewards on Skyhitz."
+conditions = "HITZ is the native utility token of the Skyhitz platform."
+image = "https://skyhitz.io/icon.png"
+is_asset_anchored = false
+is_unlimited = false
+max_number = 21000000
+
+# Asset: HITZ Token (Soroban SEP-41 contract — Gravity)
+# Soroban-native HITZ implementing the SEP-41 token interface, used by the
+# Gravity vault and Smart Swap on https://skyhitz.io.
+[[CURRENCIES]]
+code = "HITZ"
+contract = "CBAPZAZNNB4X3VPXV2LYA5RMV7XHXIVREES2GG7R5GUXDZ4R4CKOY4EU"
+display_decimals = 7
+name = "Gravity HITZ"
+desc = "Soroban-native HITZ token implementing the SEP-41 token interface with gravity-based vault mechanics."
+conditions = "Native utility token of the Skyhitz Gravity platform; staking, swaps, and rewards."
+image = "https://skyhitz.io/icon.png"
+is_asset_anchored = false
+is_unlimited = false
+max_number = 21000000
+

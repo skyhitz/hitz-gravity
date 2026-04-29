@@ -1,0 +1,80 @@
+# Cloudflare Workers config.
+#
+# This project runs on Workers + Static Assets (Cloudflare's recommended
+# successor to Pages). The Worker entry is `functions/worker.ts`; it
+# handles /api/* routes. Everything else is served directly from the
+# static export in out/ by the [assets] binding.
+#
+# Deploy:
+#   pnpm build                        # next build → out/
+#   npx wrangler deploy               # bundles worker + uploads assets
+#
+# Required one-time setup:
+#
+#   # 1. KV namespace for magic-link tokens
+#   npx wrangler kv namespace create MAGIC_LINKS
+#   # → copy the returned id into the `id` field below
+#
+#   # 2. Enable Email Routing on skyhitz.io in the Cloudflare dashboard
+#   #    and verify at least one destination address. The send_email
+#   #    binding refuses to deliver until this is done.
+#
+#   # 3. Generate a 32-byte hex master secret and put it in Cloudflare:
+#   node -e 'console.log(crypto.randomBytes(32).toString("hex"))'
+#   npx wrangler secret put MASTER_SECRET
+#
+#   # 4. Find the gas-sponsor address (deterministic from MASTER_SECRET):
+#   curl https://skyhitz.io/api/gateway/sponsor
+#   # → fund the returned G-address with testnet XLM (Friendbot works).
+
+name = "hitz-gravity"
+main = "functions/worker.ts"
+compatibility_date = "2025-10-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Static assets from the Next.js export. The Worker only runs for /api/*;
+# everything else (HTML, JS, CSS) is served directly off Cloudflare's
+# edge without invoking the Worker. `not_found_handling = "404-page"`
+# uses out/_not-found* as the 404 response for non-API misses.
+[assets]
+directory = "./out"
+binding = "ASSETS"
+not_found_handling = "404-page"
+run_worker_first = ["/api/*"]
+
+[[kv_namespaces]]
+binding = "MAGIC_LINKS"
+id = "d3cc545193ba45efaac265c9a72b2a65"
+
+# Native Cloudflare email binding — replaces the old MailChannels HTTP
+# call. No `destination_address` / `allowed_destination_addresses` means
+# we can send to any recipient, which we need since magic-link + claim
+# mails go to arbitrary user-provided addresses. The sender domain
+# (EMAIL_FROM below) must have Email Routing enabled.
+[[send_email]]
+name = "SEND_EMAIL"
+
+[vars]
+APP_URL = "https://skyhitz.io"
+EMAIL_FROM = "noreply@skyhitz.io"
+EMAIL_FROM_NAME = "HITZ"
+HITZ_CONTRACT_ID = "CBAPZAZNNB4X3VPXV2LYA5RMV7XHXIVREES2GG7R5GUXDZ4R4CKOY4EU"
+RPC_URL = "https://soroban-rpc.mainnet.stellar.gateway.fm"
+HORIZON_URL = "https://horizon.stellar.org"
+NETWORK_PASSPHRASE = "Public Global Stellar Network ; September 2015"
+# Starting XLM when the sponsor bootstraps a derived account. 1 XLM covers
+# base reserve + two subentries with room to spare.
+BOOTSTRAP_STARTING_BALANCE = "1.0"
+# Operator inbox for "user X claimed Y HITZ" notices and sponsor low-balance
+# alerts. Free-text mailbox. Anything that can receive mail works.
+SUPPORT_EMAIL = "support@skyhitz.io"
+# XLM threshold below which the sponsor account fires a low-balance alert.
+# Each lazy claim costs ~1 XLM (account bootstrap), so leave headroom to top
+# up before claims start failing. Numeric string. Floats accepted.
+LOW_BALANCE_THRESHOLD_XLM = "50"
+# USDC issuer (Centre on mainnet). Every email-derived account gets a
+# USDC trustline added during bootstrap so users can receive USDC after
+# swapping HITZ. The trustline subentry reserve (0.5 XLM) is sponsored by
+# the sponsor account, not held on the user's account, so the user's 1 XLM
+# starting balance stays usable.
+USDC_ISSUER = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"

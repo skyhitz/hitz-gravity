@@ -1,0 +1,30 @@
+# Rust's output directory
+target
+
+# Local settings
+.soroban
+.stellar
+
+# IDE / agent state
+.claude/
+.idea/
+.vscode/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Next.js build output
+.next/
+**/.next/
+
+# Cloudflare Wrangler local state
+.wrangler/
+**/.wrangler/
+
+# Local env / secrets — never commit
+.env
+.env.*
+!.env.example
+.dev.vars
+**/.dev.vars

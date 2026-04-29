@@ -1,0 +1,53 @@
+# Builds the gravity-token Soroban contract reproducibly and publishes the
+# resulting WASM as a GitHub Release asset. Stellar Expert pulls this
+# release to verify on-chain bytecode matches the source in this repo —
+# once validated, a "Source code" link appears on the contract page at
+# https://stellar.expert/explorer/public/contract/<CONTRACT_ID>.
+#
+# Triggered by pushing a tag matching v* (e.g. `git tag v1.0.0 &&
+# git push origin v1.0.0`). The workflow signs the release with the
+# default GITHUB_TOKEN — no extra secrets needed.
+#
+# Reference: https://github.com/stellar-expert/soroban-build-workflow
+
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  # Allow manual dispatch for re-running a release if validation needs a
+  # rebuild without bumping the tag.
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Release version tag (e.g. v1.0.0)"
+        required: true
+
+jobs:
+  release-gravity-token:
+    # The reusable workflow needs:
+    #   contents: write   → create the GitHub Release and upload WASM
+    #   id-token: write   → mint an OIDC token for build provenance/attestation
+    #   attestations: write → write the attestation linking source ↔ artifact
+    # GitHub defaults to `id-token: none`, so the caller must opt in here.
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    # Pinned to v25.1.0 (matches stellar-cli 25.1.0 the workflow installs).
+    # Avoid @main — its inputs are unstable and have shipped regressions.
+    uses: stellar-expert/soroban-build-workflow/.github/workflows/release.yml@v25.1.0
+    with:
+      release_name: ${{ github.event.inputs.release_version || github.ref_name }}
+      release_description: "HITZ Gravity Token — Soroban SEP-41 contract release"
+      # Plain string, NOT a JSON array. The reusable workflow does
+      # `WORK_DIR="$WORK_DIR/${{ inputs.relative_path }}"` with no parsing,
+      # so a JSON-array value yields a literal `[...]` path that breaks
+      # every subsequent step.
+      relative_path: contracts/gravity-token
+      package: gravity-token
+      # No `make_target` — the workflow's built-in `stellar contract build`
+      # step is exactly what `make build` runs in this repo.
+    secrets:
+      release_token: ${{ secrets.GITHUB_TOKEN }}
