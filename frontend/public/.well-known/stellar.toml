@@ -15,7 +15,7 @@ ACCOUNTS = [
 ORG_NAME = "Skyhitz"
 ORG_URL = "https://skyhitz.io"
 ORG_LOGO = "https://skyhitz.io/icon.png"
-ORG_DESCRIPTION = "Decentralized music platform on Stellar. Discover, stake, and earn from independent music."
+ORG_DESCRIPTION = "Tokens that bound their own concentration. Gravity-mechanic primitives on Stellar."
 ORG_OFFICIAL_EMAIL = "support@skyhitz.io"
 ORG_TWITTER = "skyhitz"
 
