@@ -40,12 +40,20 @@ const reportsDir = join(repoRoot, "reports");
 const dataDir = join(reportsDir, "data");
 const dataFile = join(dataDir, "events.jsonl");
 const cursorFile = join(dataDir, "cursor.json");
+// Disk cache of Stellar Expert contract metadata — keyed by C-address.
+// Creator/created are immutable, so we don't need a TTL; we only ever
+// fetch on cache miss. This keeps the monthly run from hammering the
+// Stellar Expert API and means the report is reproducible offline.
+const contractInfoFile = join(dataDir, "contract-info.json");
 
 const RPC_URL =
   process.env.RPC_URL ?? "https://soroban-rpc.mainnet.stellar.gateway.fm";
 const CONTRACT_ID =
   process.env.HITZ_CONTRACT_ID ??
   "CBAPZAZNNB4X3VPXV2LYA5RMV7XHXIVREES2GG7R5GUXDZ4R4CKOY4EU";
+const STELLAR_EXPERT_API =
+  process.env.STELLAR_EXPERT_API ??
+  "https://api.stellar.expert/explorer/public";
 
 // Stellar Expert anchor pages call these G-addrs out by role. Hard-coded
 // so reports don't need a query to label them. Update if any rotate.
@@ -223,6 +231,69 @@ function fmtHitz(stroops) {
   return `${sign}${whole.toLocaleString("en-US")}.${frac.replace(/0+$/, "") || "0"}`;
 }
 
+// Soroban contract IDs start with C; Stellar account IDs with G. A
+// quick prefix check is enough for our reporting — the on-chain types
+// guarantee the convention.
+function isContractAddr(addr) {
+  return typeof addr === "string" && addr.startsWith("C") && addr.length === 56;
+}
+
+// ─── Stellar Expert metadata cache ────────────────────────────────────
+//
+// Used to enrich vault events with creator info: we want to be able to
+// tell a personal arb bot (creator == initiator) from public routing
+// infra (creator == DAO/team) at a glance, without hand-investigation.
+//
+// All fetches are best-effort: API failures degrade to "unknown" rather
+// than blocking the report. The cache is committed to the repo so
+// repeated runs are deterministic and don't hammer the API.
+
+function readContractCache() {
+  if (!existsSync(contractInfoFile)) return {};
+  try {
+    return JSON.parse(readFileSync(contractInfoFile, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function writeContractCache(cache) {
+  writeFileSync(contractInfoFile, JSON.stringify(cache, null, 2) + "\n");
+}
+
+async function fetchContractInfo(id, cache) {
+  if (cache[id]) return cache[id];
+  const url = `${STELLAR_EXPERT_API}/contract/${id}`;
+  try {
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(8000),
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = await res.json();
+    // Keep only the fields we display — Stellar Expert returns more, but
+    // we don't want the cache to bloat with churn-prone counters.
+    cache[id] = {
+      creator: body.creator ?? null,
+      created: body.created ?? null,
+      validation: body.validation?.status ?? null,
+      validationRepo: body.validation?.repository ?? null,
+      // Snapshot the version count at first-look. Subsequent reports
+      // can compare against the live API if they want trend data, but
+      // for our purposes a static reference is enough.
+      versionsAtLookup: body.versions ?? null,
+      lookedUpAt: new Date().toISOString(),
+    };
+    return cache[id];
+  } catch (err) {
+    console.warn(
+      `[contract-report] could not fetch metadata for ${id}: ${err instanceof Error ? err.message : err}`
+    );
+    cache[id] = { error: true, lookedUpAt: new Date().toISOString() };
+    return cache[id];
+  }
+}
+
 function monthBounds(yyyymm) {
   // yyyymm in 'YYYY-MM' form. Returns [startISO, endISO) for the month.
   const [y, m] = yyyymm.split("-").map(Number);
@@ -245,7 +316,7 @@ function inWindow(ts, startISO, endISO) {
 // would otherwise let us write outside reports/.
 const YYYYMM_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
-function generateReport(yyyymm = currentYM()) {
+async function generateReport(yyyymm = currentYM()) {
   if (!YYYYMM_RE.test(yyyymm)) {
     throw new Error(`invalid month: ${yyyymm} (expected YYYY-MM)`);
   }
@@ -429,11 +500,147 @@ function generateReport(yyyymm = currentYM()) {
     push("## Vault dynamics");
     push("");
     push(
-      `${trapped} account-vault transitions and ${released} releases during ` +
-        "the window. A non-zero count is normal as L moves with pool reserves; " +
-        "spikes are worth investigating."
+      `${trapped} account vault-traps and ${released} releases during the window. ` +
+        "Non-zero counts are normal — L (the Event Horizon) shifts continuously with pool " +
+        "reserves, so accounts holding HITZ near the limit cross it routinely. The signal to " +
+        "watch is **transient** (trap+release in the same tx → lazy evaluation passing through " +
+        "an arber or LP shuffle, exactly as designed) vs **persistent** (an account stuck in " +
+        "the vault state across multiple txs → a real holder waiting for L to grow back, or a " +
+        "contract that's accidentally accumulating)."
     );
     push("");
+
+    // Group vault events by address+tx and pair trap↔release within
+    // the same transaction. This is the line between healthy lazy-eval
+    // pass-throughs and stuck accounts.
+    const vaultByTx = new Map(); // txHash → [events]
+    for (const e of vaults) {
+      const arr = vaultByTx.get(e.txHash) ?? [];
+      arr.push(e);
+      vaultByTx.set(e.txHash, arr);
+    }
+
+    // Pre-fetch contract metadata for every C-address that appears in
+    // a vault event. We do this concurrently so the wait is bounded by
+    // the slowest single API call, not the sum of them.
+    const cache = readContractCache();
+    const vaultedContracts = new Set();
+    for (const e of vaults) {
+      const a = e.topics[0];
+      if (isContractAddr(a)) vaultedContracts.add(a);
+    }
+    await Promise.all(
+      [...vaultedContracts].map((id) => fetchContractInfo(id, cache))
+    );
+    writeContractCache(cache);
+
+    // Build a per-tx classification.
+    const rows = [];
+    for (const [txHash, evs] of vaultByTx) {
+      // Sort by op-idx so we keep chronological order within the tx.
+      evs.sort((a, b) => (a.id < b.id ? -1 : 1));
+      // Group by address so traps and releases on the same address pair up.
+      const byAddr = new Map();
+      for (const e of evs) {
+        const a = e.topics[0];
+        const arr = byAddr.get(a) ?? [];
+        arr.push(e);
+        byAddr.set(a, arr);
+      }
+
+      // HITZ flow through each address in this tx, for context.
+      const txTransfers = transfers.filter((t) => t.txHash === txHash);
+      const inflowByAddr = new Map();
+      const outflowByAddr = new Map();
+      for (const t of txTransfers) {
+        const [from, to] = t.topics;
+        const amt = BigInt(t.data ?? "0");
+        outflowByAddr.set(from, (outflowByAddr.get(from) ?? 0n) + amt);
+        inflowByAddr.set(to, (inflowByAddr.get(to) ?? 0n) + amt);
+      }
+
+      for (const [addr, addrEvents] of byAddr) {
+        const trappedHere = addrEvents.some((e) => e.data === true);
+        const releasedHere = addrEvents.some((e) => e.data === false);
+        const transient = trappedHere && releasedHere;
+
+        const info = isContractAddr(addr) ? cache[addr] : null;
+        let label;
+        if (addr === SPONSOR) label = "**sponsor**";
+        else if (addr === ADMIN) label = "**admin**";
+        else if (isContractAddr(addr)) {
+          if (info?.creator) {
+            label = `contract (creator \`${shortAddr(info.creator)}\``;
+            if (info.validation === "verified") label += ", verified source";
+            label += ")";
+          } else {
+            label = "contract (metadata unavailable)";
+          }
+        } else {
+          label = "external account";
+        }
+
+        rows.push({
+          txHash,
+          ts: addrEvents[0].ts,
+          addr,
+          label,
+          transient,
+          trappedHere,
+          releasedHere,
+          inflow: inflowByAddr.get(addr) ?? 0n,
+          outflow: outflowByAddr.get(addr) ?? 0n,
+          info,
+        });
+      }
+    }
+
+    // Render: transient pairs first (the healthy case), then anything
+    // that didn't get released within the same tx.
+    const transients = rows.filter((r) => r.transient);
+    const sticky = rows.filter((r) => !r.transient);
+
+    if (transients.length > 0) {
+      push("### Transient — trap + release in same tx (lazy evaluation firing)");
+      push("");
+      push(
+        "These are the model working correctly. An account briefly exceeded L while " +
+          "intermediating a transfer, then the next outflow brought it back under. No user-visible delay."
+      );
+      push("");
+      push("| When | Address | Type | HITZ in / out (same tx) | Tx |");
+      push("|---|---|---|---|---|");
+      for (const r of transients) {
+        const flow = `+${fmtHitz(r.inflow)} / -${fmtHitz(r.outflow)}`;
+        push(
+          `| ${r.ts.slice(0, 19).replace("T", " ")} | \`${shortAddr(r.addr)}\` | ${r.label} | ${flow} | [\`${r.txHash.slice(0, 8)}…\`](https://stellar.expert/explorer/public/tx/${r.txHash}) |`
+        );
+      }
+      push("");
+    }
+
+    if (sticky.length > 0) {
+      push("### Persistent — vault state changed but did not flip back in the same tx");
+      push("");
+      push(
+        "These are worth a closer look — either a holder is parked above L waiting for the protocol to grow into them, " +
+          "or a contract is acquiring HITZ instead of routing through. Cross-reference with the address's other " +
+          "transfers in this window."
+      );
+      push("");
+      push("| When | Address | Type | State change | HITZ in / out (same tx) | Tx |");
+      push("|---|---|---|---|---|---|");
+      for (const r of sticky) {
+        const change = r.trappedHere
+          ? "→ **vaulted**"
+          : "→ released";
+        const flow = `+${fmtHitz(r.inflow)} / -${fmtHitz(r.outflow)}`;
+        push(
+          `| ${r.ts.slice(0, 19).replace("T", " ")} | \`${shortAddr(r.addr)}\` | ${r.label} | ${change} | ${flow} | [\`${r.txHash.slice(0, 8)}…\`](https://stellar.expert/explorer/public/tx/${r.txHash}) |`
+        );
+      }
+      push("");
+    }
   }
 
   push("---");
@@ -460,11 +667,11 @@ const arg = process.argv[3];
       await fetchEvents();
       break;
     case "generate":
-      generateReport(arg);
+      await generateReport(arg);
       break;
     case "all":
       await fetchEvents();
-      generateReport(arg);
+      await generateReport(arg);
       break;
     default:
       console.error(
