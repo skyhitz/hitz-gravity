@@ -7,7 +7,8 @@
     "build": "next build && node scripts/copy-well-known.mjs",
     "start": "next start",
     "lint": "eslint",
-    "send:legacy-reparation": "node scripts/send-legacy-reparation.mjs"
+    "send:legacy-reparation": "node scripts/send-legacy-reparation.mjs",
+    "contract-report": "node scripts/contract-report.mjs"
   },
   "dependencies": {
     "@creit.tech/stellar-wallets-kit": "^2.1.0",

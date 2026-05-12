@@ -1,0 +1,99 @@
+# Monthly on-chain activity report for the HITZ contract.
+#
+# Runs at 12:05 UTC on the 1st of every month: pulls new contract events
+# from Soroban RPC, generates a markdown report for the *previous* month,
+# and commits both the report and the updated event store back to main.
+#
+# The event store (reports/data/events.jsonl) is append-only and durable
+# across runs — each invocation extends history forward from the saved
+# cursor, so no data is ever lost even though public RPC nodes only
+# retain a small window.
+#
+# Trigger manually any time via the Actions tab → "Run workflow".
+
+name: Monthly HITZ Report
+
+on:
+  schedule:
+    # Day-of-month=1, hour=12 UTC. Slight offset (:05) avoids the
+    # cron stampede that hits providers right on the hour.
+    - cron: "5 12 1 * *"
+  workflow_dispatch:
+    inputs:
+      month:
+        description: "Month to report (YYYY-MM). Defaults to last month."
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need full history so we can commit back the updated jsonl.
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      # Pipe untrusted input (workflow_dispatch.month) through an env var
+      # rather than ${{ ... }} interpolation in the shell. This is GitHub's
+      # recommended pattern for avoiding script injection — the contents
+      # never get evaluated by the shell parser, only by `[[ =~ ]]`.
+      # Also enforce a strict YYYY-MM format so downstream consumers
+      # (file paths, commit messages) can trust the value.
+      - name: Determine report month
+        id: month
+        env:
+          INPUT_MONTH: ${{ github.event.inputs.month }}
+        run: |
+          if [ -n "$INPUT_MONTH" ]; then
+            if ! [[ "$INPUT_MONTH" =~ ^[0-9]{4}-(0[1-9]|1[0-2])$ ]]; then
+              echo "::error::month must match YYYY-MM (got: $INPUT_MONTH)"
+              exit 1
+            fi
+            ym="$INPUT_MONTH"
+          else
+            # Default: last calendar month (`-d "last month"` is GNU date)
+            ym="$(date -d 'last month' -u +'%Y-%m')"
+          fi
+          echo "ym=$ym" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch new contract events
+        working-directory: frontend
+        run: pnpm contract-report fetch
+
+      - name: Generate report
+        working-directory: frontend
+        env:
+          YM: ${{ steps.month.outputs.ym }}
+        run: pnpm contract-report generate "$YM"
+
+      - name: Commit updated store and report
+        env:
+          YM: ${{ steps.month.outputs.ym }}
+        run: |
+          if [ -z "$(git status --porcelain reports/)" ]; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add reports/
+          git commit -m "chore(reports): monthly HITZ activity $YM"
+          git push
