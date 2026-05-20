@@ -43,10 +43,20 @@ pnpm contract-report all
 
 ## Automation
 
-[`.github/workflows/monthly-report.yml`](../.github/workflows/monthly-report.yml)
-runs on the 1st of every month, fetches the latest events, generates
-the previous month's report, and commits both the report and the
-updated event store back to `main`.
+Two workflows, because the data and the report have different cadences:
+
+- [`.github/workflows/daily-fetch.yml`](../.github/workflows/daily-fetch.yml)
+  runs **every day**. Soroban public RPC only retains ~7 days of events,
+  so the fetch must run well inside that window or history is lost
+  permanently. It commits the updated `data/events.jsonl` back to `main`.
+- [`.github/workflows/monthly-report.yml`](../.github/workflows/monthly-report.yml)
+  runs on the **1st of each month**, generates the previous month's
+  report from the (already-complete) event store, and commits it.
+
+> **Pagination note:** `getEvents` scans in bounded ledger chunks. A
+> short or empty page does NOT mean "done" — only the cursor reaching
+> `latestLedger` does. `fetchEvents` pages on that condition; do not
+> "optimise" it back to a page-size check or it silently truncates.
 
 ## Extending
 

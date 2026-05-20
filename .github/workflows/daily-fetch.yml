@@ -1,0 +1,71 @@
+# Daily incremental fetch of HITZ contract events into the event store.
+#
+# WHY THIS EXISTS, SEPARATE FROM THE MONTHLY REPORT:
+#   Soroban public RPC retains only ~7 days of events. The monthly report
+#   workflow alone would let 23+ days of history age out of retention
+#   between runs — permanently unrecoverable. This job runs every day,
+#   well inside the 7-day window, so the append-only store in
+#   reports/data/events.jsonl always stays complete.
+#
+#   `generate` (the actual report) stays monthly — see monthly-report.yml.
+#   This job ONLY fetches + commits new events.
+#
+# The fetch is idempotent (dedup by event id), so overlapping runs or a
+# manual re-trigger never double-write.
+
+name: Daily HITZ Event Fetch
+
+on:
+  schedule:
+    # 06:17 UTC daily. Odd minute avoids the top-of-hour cron stampede.
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Never let two fetches race on the same branch — they'd both try to
+# commit events.jsonl. Queue them instead.
+concurrency:
+  group: hitz-event-fetch
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Fetch new contract events
+        working-directory: frontend
+        run: pnpm contract-report fetch
+
+      - name: Commit updated event store
+        run: |
+          if [ -z "$(git status --porcelain reports/data/)" ]; then
+            echo "No new events."
+            exit 0
+          fi
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add reports/data/
+          git commit -m "chore(reports): daily HITZ event fetch $(date -u +'%Y-%m-%d')"
+          # Re-pull in case another run committed while we worked.
+          git pull --rebase --autostash origin "$(git rev-parse --abbrev-ref HEAD)" || true
+          git push

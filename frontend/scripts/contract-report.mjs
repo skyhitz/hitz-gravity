@@ -180,43 +180,65 @@ function parseEvent(evt) {
 const jsonStringify = (obj) =>
   JSON.stringify(obj, (_k, v) => (typeof v === "bigint" ? v.toString() : v));
 
+// A Soroban event cursor is "<toid>-<index>"; the TOID packs the ledger
+// sequence in its high 32 bits. We need this to know when pagination has
+// caught up to the chain tip. BigInt because the TOID exceeds 2^53.
+function cursorLedger(cur) {
+  if (!cur || typeof cur !== "string") return null;
+  try {
+    return Number(BigInt(cur.split("-")[0]) >> 32n);
+  } catch {
+    return null;
+  }
+}
+
+// Load every event id already in the store. Used to dedup on fetch so a
+// re-pull (overlapping ledger range, restart after a stale cursor) never
+// double-writes a row.
+function loadEventIds() {
+  const ids = new Set();
+  for (const e of readEvents()) if (e.id) ids.add(e.id);
+  return ids;
+}
+
 // ─── fetch ────────────────────────────────────────────────────────────
 
 async function fetchEvents() {
   ensureDirs();
   const server = new StellarSdk.rpc.Server(RPC_URL);
 
-  let cursor = readCursor();
-  let pageCursor = cursor?.cursor;
+  let pageCursor = readCursor()?.cursor;
+  const seenIds = loadEventIds();
 
-  // The Soroban RPC SDK requires `startLedger` on every getEvents call,
-  // even when a `cursor` is supplied (the cursor takes precedence; the
-  // startLedger is just a floor). Pick the floor as:
-  //   - $START_LEDGER if explicitly overridden
-  //   - the ledger of our newest stored event (we want to start AT or
-  //     above it; cursor will skip us forward past already-seen events)
-  //   - latest - 17000 if the store is empty (~24h, fits public retention)
+  // The SDK requires `startLedger` on every getEvents call even when a
+  // cursor is supplied (the cursor supersedes it; startLedger just has
+  // to be a valid in-window floor). Track it off the cursor so it never
+  // drifts below retention mid-run.
   let startLedger;
   if (process.env.START_LEDGER) {
     startLedger = Number(process.env.START_LEDGER);
   } else if (pageCursor) {
-    // Derive a safe floor from the last stored event so we never go
-    // below RPC retention. The cursor itself supersedes startLedger.
-    const last = readEvents().at(-1);
-    startLedger = last?.ledger ?? 1;
+    startLedger =
+      cursorLedger(pageCursor) ?? readEvents().at(-1)?.ledger ?? 1;
   } else {
     const latest = await server.getLatestLedger();
-    startLedger = Math.max(1, latest.sequence - 17000);
+    // Empty store: start near the retention floor. Public RPC keeps
+    // ~7 days of events; 100k ledgers (~6d) stays safely inside it.
+    startLedger = Math.max(1, latest.sequence - 100_000);
   }
 
-  const filter = {
-    type: "contract",
-    contractIds: [CONTRACT_ID],
-  };
+  const filter = { type: "contract", contractIds: [CONTRACT_ID] };
 
   let totalNew = 0;
-  let page;
-  do {
+  let totalDup = 0;
+  let pages = 0;
+
+  while (true) {
+    // Keep startLedger pinned to the cursor so a long run can't outrun
+    // the retention window.
+    if (pageCursor) {
+      startLedger = cursorLedger(pageCursor) ?? startLedger;
+    }
     const req = {
       startLedger,
       pagination: {
@@ -225,25 +247,33 @@ async function fetchEvents() {
       },
       filters: [filter],
     };
+
+    let page;
     try {
       page = await server.getEvents(req);
     } catch (err) {
-      // Common RPC failure mode: requested startLedger is below retention.
-      // Bump forward and try again. If we already have a cursor, surface
-      // the error — it's not a retention problem.
-      if (!pageCursor && /not within.*range|outside.*window/i.test(String(err))) {
+      // Stale cursor or startLedger below retention. Restart from the
+      // retention floor — dedup makes the overlapping re-pull safe.
+      if (/within.*range|outside.*window|must be/i.test(String(err))) {
         const latest = await server.getLatestLedger();
-        startLedger = Math.max(1, latest.sequence - 8640); // ~12h
+        startLedger = Math.max(1, latest.sequence - 100_000);
+        pageCursor = undefined;
         console.warn(
-          `[contract-report] RPC retention window too tight, retrying from ledger ${startLedger}`
+          `[contract-report] cursor/startLedger stale — restarting from ledger ${startLedger} (dedup protects against overlap)`
         );
         continue;
       }
       throw err;
     }
+    pages++;
 
     for (const evt of page.events ?? []) {
       const parsed = parseEvent(evt);
+      if (parsed.id && seenIds.has(parsed.id)) {
+        totalDup++;
+        continue;
+      }
+      if (parsed.id) seenIds.add(parsed.id);
       appendFileSync(dataFile, jsonStringify(parsed) + "\n");
       totalNew++;
     }
@@ -252,11 +282,21 @@ async function fetchEvents() {
       pageCursor = page.cursor;
       writeCursor({ cursor: pageCursor, updatedAt: new Date().toISOString() });
     }
-    // RPC returns fewer than the limit when we've caught up.
-  } while (page.events && page.events.length === 200);
+
+    // CRITICAL: getEvents scans in bounded ledger chunks (~10k ledgers).
+    // A short — or even empty — page means "end of this chunk", NOT
+    // "end of data". The ONLY correct stop condition is the cursor's
+    // ledger reaching the chain tip (latestLedger). The old code stopped
+    // on the first sub-200 page and silently skipped everything after.
+    const cl = cursorLedger(page.cursor);
+    const tip = page.latestLedger;
+    if (!page.cursor || cl == null || (tip != null && cl >= tip)) {
+      break;
+    }
+  }
 
   console.log(
-    `[contract-report] fetch complete: ${totalNew} new events appended`
+    `[contract-report] fetch complete: ${totalNew} new, ${totalDup} duplicate(s) skipped, ${pages} page(s)`
   );
 }
 
