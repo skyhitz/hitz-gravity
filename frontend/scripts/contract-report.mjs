@@ -101,6 +101,40 @@ const KNOWN_CONTRACTS = {
     label: "Aqua AMM pool (HITZ pair)",
     kind: "pool",
   },
+
+  // ─── Arb infrastructure identified through manual investigation ────
+  //
+  // IMPORTANT: from HITZ `transfer` events alone we CANNOT see the
+  // cross-asset side of a trade (the XLM/USDC legs, a Blend borrow,
+  // etc.). So "flash-loan vs capital-funded arb" is not auto-detectable
+  // from our event store — it requires knowing the contract. These
+  // entries carry that hard-won knowledge forward so the report labels
+  // the pattern correctly. Add a contract here once you've confirmed
+  // its role (Stellar Expert creator + subinvocation count + reading
+  // the actual invocation tree of one of its txs).
+  CBNVK5PE7JCL773P5SHWE3YUCHQVVVPVOG72SKCEFVTZOLLQWVTCPLZ3: {
+    label: "Blend flash-loan receiver (GDJMOSUF arb)",
+    kind: "flashloan",
+    note:
+      "Receives flash-loaned capital from a Blend pool during the loan " +
+      "callback, runs the swap chain through HITZ pools, repays the loan " +
+      "+ fee, keeps the spread. Confirmed 2026-05-15 (tx c74e0f7e).",
+  },
+  CA4I5TPQAEF6C62B4UI7IDNDAPT5RUNSYGB6WSYNIQXHLG4JOFX2NSMH: {
+    label: "Flash-loan arb entry point (GDJMOSUF)",
+    kind: "flashloan",
+    note:
+      "Outer contract — owner calls its a() function to kick off a Blend " +
+      "flash-loan arbitrage cycle. Pairs with the receiver above.",
+  },
+  CDWMA5P5CYR7JNUGTQVETOCSJZWSGNLEILF7JMBF3QIV5BKKVGDKKI4G: {
+    label: "GDXGYASW personal arb contract",
+    kind: "arb",
+    note:
+      "Owner-deployed routing contract. Pass-through arb cycles through " +
+      "HITZ pools. Funding source (own capital vs borrowed) not visible " +
+      "from HITZ events — see Stellar Expert for the full invocation tree.",
+  },
 };
 
 // Stellar Expert anchor pages call these G-addrs out by role. Hard-coded
@@ -360,6 +394,28 @@ function describeAddress(addr, ctx) {
 // playbooks come first in the array.
 const PLAYBOOKS = [
   {
+    // MUST stay ahead of owner-arb: a flash-loan tx also looks like an
+    // owner-deployed pass-through, so the more-specific playbook wins.
+    id: "flashloan-arb",
+    name: "Flash-loan arbitrage cycle",
+    // Detection is registry-based: if any address in the tx is a known
+    // flash-loan contract (KNOWN_CONTRACTS kind === "flashloan"), it's a
+    // flash-loan cycle. We can't infer this from HITZ events alone — the
+    // borrow leg is in XLM/USDC — so confirmed contracts are listed in
+    // KNOWN_CONTRACTS. Add new ones there as you identify them.
+    matches: (cls, _ctx) =>
+      (cls.addresses ?? []).some(
+        (a) => KNOWN_CONTRACTS[a]?.kind === "flashloan"
+      ),
+    explain: () => [
+      "**What's happening:** A flash-loan arbitrage. The initiator's entry-point contract borrows capital atomically from a lending protocol (Blend), the borrowed funds run a multi-hop swap that passes through HITZ pools, the loan + fee is repaid, and the spread is kept — all in one transaction. Zero capital posted; if the cycle isn't profitable the whole tx reverts and only gas is lost.",
+      "",
+      "**How to read the flow table below:** you'll see HITZ enter the flash-loan receiver from one pool and leave to another (net 0 on the receiver). The XLM/USDC borrow + repayment legs are NOT visible here — HITZ events only show the HITZ hop. The flash-loan nature is known because the receiver contract is in our identified-contracts registry (see its note).",
+      "",
+      "**Why this matters:** Flash-loan arb is the most capital-efficient price-correction there is. Its presence proves HITZ pool prices diverge enough, often enough, to clear borrow fees + gas. The receiver briefly holds a large HITZ amount mid-swap and gets vault-flipped — then released in the same tx by lazy evaluation. Pool LPs earn the swap fee on every cycle.",
+    ],
+  },
+  {
     id: "owner-arb",
     name: "Owner-deployed arbitrage cycle",
     matches: (cls, ctx) =>
@@ -369,39 +425,13 @@ const PLAYBOOKS = [
         return info?.creator === ctx.txSource;
       }),
     explain: () => [
-      "**What's happening:** The tx initiator wrote and deployed their own Soroban contract that acts as a pass-through router. HITZ enters from one of your pools, exits to another, and the contract's HITZ balance ends at zero — but the round-trip captures a price discrepancy in a *different* asset (XLM, USDC, …) that we can't see from HITZ events alone. Capital-funded, not flash-loaned, unless the contract also holds positions in a lending protocol.",
+      "**What's happening:** The tx initiator deployed their own Soroban contract that acts as a pass-through router. HITZ enters from one of your pools, exits to another, and the contract's HITZ balance ends at zero — the round-trip captures a price discrepancy in a *different* asset (XLM, USDC, …).",
       "",
-      "**Why this matters:** Personal arb contracts are a strong signal that HITZ pool spreads are wide enough to justify writing and iterating on bespoke routing code. Each cycle tightens prices across HITZ-paired pools as a side effect. Pool LPs earn the swap fee on every pass-through.",
+      "**What we can and can't tell:** From HITZ `transfer` events alone we see only the HITZ hop. We **cannot** tell whether the cycle was funded by the owner's own capital or by a flash loan — that lives in the XLM/USDC legs we don't index. If you confirm a flash-loan source for one of these contracts, add it to `KNOWN_CONTRACTS` with `kind: \"flashloan\"` and it will reclassify automatically.",
       "",
-      "**Risk:** None. The contract is the arber's own infrastructure, not registered as a HITZ router or pool, so it can't bypass vault rules. When HITZ momentarily exceeds L during the cycle, lazy evaluation flips the vault state on and off within the same tx (zero user-visible delay).",
-    ],
-  },
-  {
-    id: "flashloan-arb",
-    name: "Flash-loan arbitrage cycle (suspected)",
-    // We can't see XLM/USDC sides from HITZ events, but the
-    // signature pattern is: tx initiator deployed an entry-point
-    // contract that calls a sub-contract many times (the flash-loan
-    // receiver / callback). When the pass-through is owner-deployed
-    // AND the txInfo shows a deep contract call chain, we tentatively
-    // label as flash-loan. Refine as we observe more.
-    matches: (cls, ctx) => {
-      if (!ctx.txSource) return false;
-      return cls.passThroughs.some((pt) => {
-        const info = ctx.contractCache?.[pt.addr];
-        // Strong heuristic: same owner deployed multiple contracts
-        // very close together. We can't verify that here without
-        // extra lookups, so leave this playbook for manual flagging
-        // via KNOWN_CONTRACTS until we add the heuristic.
-        return false;
-      });
-    },
-    explain: () => [
-      "**What's happening:** The tx initiator deployed two contracts — an outer entry point + a flash-loan receiver — and uses a lending protocol (Blend, etc.) to borrow capital atomically. The receiver runs a multi-hop swap that passes through HITZ pools, repays the flash loan + fee, and pockets the difference. Zero capital posted; the whole cycle reverts if not profitable.",
+      "**Why this matters:** Personal arb contracts signal that HITZ pool spreads are wide enough to justify bespoke routing code. Each cycle tightens prices across HITZ-paired pools. Pool LPs earn the swap fee on every pass-through.",
       "",
-      "**Why this matters:** Flash-loan arb is the most capital-efficient form of price-correction. Its presence proves HITZ pool prices regularly diverge enough to clear borrow fees + gas. As more arbers integrate, per-cycle profit compresses but pool fee revenue persists.",
-      "",
-      "**Detection note:** Currently flagged only when manually added to `KNOWN_CONTRACTS`. Auto-detection requires cross-asset visibility (i.e. seeing XLM/USDC transfers in the same tx), which our event store doesn't cover yet.",
+      "**Risk:** None. These contracts are arbers' own infrastructure, not registered HITZ routers/pools, so they can't bypass vault rules. When HITZ momentarily exceeds L mid-cycle, lazy evaluation flips the vault on and off within the same tx.",
     ],
   },
   {
@@ -590,7 +620,14 @@ function classifyTx(txHash, txTransfers, ctx) {
     verdict = `${txTransfers.length}-leg transfer chain`;
   }
 
-  return { totalMoved, passThroughs, acquirers, distributors, verdict };
+  return {
+    totalMoved,
+    passThroughs,
+    acquirers,
+    distributors,
+    verdict,
+    addresses: [...addrs],
+  };
 }
 
 function fmtHitz(stroops) {
@@ -858,27 +895,17 @@ async function generateReport(yyyymm = currentYM()) {
     arr.sort((a, b) => (a.id < b.id ? -1 : 1));
   }
 
-  // Prefetch tx envelope info for: vault-touching txs, sponsor/admin
-  // txs, and the top-N by HITZ volume. These are the txs we'll narrate.
-  const NOTABLE_TX_LIMIT = 15;
+  // EVERY HITZ-touching tx in the window gets narrated — no top-N
+  // cutoff. A report you can't find a specific tx in is useless. The
+  // playbook grouping keeps it readable: each pattern is explained once,
+  // then every occurrence is listed compactly. With ~dozens of txs/month
+  // this stays well within a scannable length.
   const volumeByTx = new Map();
   for (const [hash, ts] of txsByHash) {
     const total = ts.reduce((s, t) => s + BigInt(t.data ?? "0"), 0n);
     volumeByTx.set(hash, total);
   }
-  const topVolumeTxs = [...volumeByTx.entries()]
-    .sort((a, b) => (b[1] > a[1] ? 1 : -1))
-    .slice(0, NOTABLE_TX_LIMIT)
-    .map(([h]) => h);
-
-  const vaultTxs = [...new Set(vaults.map((e) => e.txHash))];
-  const sponsorAdminTxs = transfers
-    .filter((e) => e.topics[0] === SPONSOR || e.topics[0] === ADMIN)
-    .map((e) => e.txHash);
-
-  const notableTxs = [
-    ...new Set([...vaultTxs, ...sponsorAdminTxs, ...topVolumeTxs]),
-  ];
+  const notableTxs = [...txsByHash.keys()];
 
   const txCache = readTxCache();
   await Promise.all(notableTxs.map((h) => fetchTxInfo(h, txCache)));
@@ -1125,19 +1152,18 @@ async function generateReport(yyyymm = currentYM()) {
 
   // ─── Notable transactions ──────────────────────────────────────────
   //
-  // The set is: every vault-touching tx, every sponsor/admin direct
-  // transfer, and the top-N txs by HITZ volume in the window. Each
-  // gets a structural narrative built from on-chain events alone:
-  // who initiated, what addresses moved how much HITZ, what pattern
-  // it fits (pass-through, sponsor payment, etc.).
+  // Every HITZ-touching tx in the window gets a structural narrative
+  // built from on-chain events: who initiated, what addresses moved how
+  // much HITZ, what playbook it fits. No cutoff — completeness over
+  // brevity, because the point is to be able to find any tx.
   if (notableTxs.length > 0) {
-    push("## Notable transactions");
+    push("## Transactions");
     push("");
     push(
-      "Every HITZ-touching tx worth reading — vault transitions, sponsor/admin direct sends, and the top " +
-        `${NOTABLE_TX_LIMIT} by HITZ volume. Grouped by **playbook**: a recurring tx pattern we recognise ` +
-        "end-to-end. We explain each playbook once, show one detailed example, then list the other occurrences " +
-        "compactly. Unrecognised patterns land in *Other / unique patterns* and deserve a manual look."
+      `Every one of the ${notableTxs.length} HITZ-touching transactions this window, grouped by ` +
+        "**playbook** — a recurring pattern we recognise end-to-end. Each playbook is explained once, " +
+        "then one occurrence is shown in full per-leg detail and the rest are listed compactly. " +
+        "Anything that matches no known pattern lands in *Other / unique patterns*."
     );
     push("");
 
