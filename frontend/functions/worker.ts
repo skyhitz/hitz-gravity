@@ -21,6 +21,9 @@ import { POST as gatewayNotify } from "./api/gateway/notify";
 import { POST as gatewayResolve } from "./api/gateway/resolve";
 import { GET as gatewaySponsor } from "./api/gateway/sponsor";
 import { GET as holders } from "./api/holders";
+import { GET_CONTRACT_INFO, GET_EVENTS, GET_STATUS, GET_TX_INFO } from "./api/data";
+import { GET as priceHistory } from "./api/price-history";
+import { runIngest } from "./_lib/ingest";
 import type { Env } from "./_lib/types";
 
 type Handler = (
@@ -44,6 +47,11 @@ const ROUTES: Record<string, Handler> = {
   "POST /api/gateway/resolve": gatewayResolve,
   "GET /api/gateway/sponsor": gatewaySponsor,
   "GET /api/holders": holders,
+  "GET /api/data/events": GET_EVENTS,
+  "GET /api/data/tx-info": GET_TX_INFO,
+  "GET /api/data/contract-info": GET_CONTRACT_INFO,
+  "GET /api/data/status": GET_STATUS,
+  "GET /api/price/history": priceHistory,
 };
 
 export default {
@@ -70,5 +78,16 @@ export default {
       });
     }
     return handler(request, env, ctx);
+  },
+
+  // Cron Trigger (wrangler.toml [triggers]) — on-chain data ingestion.
+  async scheduled(
+    _controller: ScheduledController,
+    env: Env,
+    ctx: ExecutionContext
+  ): Promise<void> {
+    ctx.waitUntil(
+      runIngest(env).then((report) => console.log("[ingest]", JSON.stringify(report)))
+    );
   },
 };

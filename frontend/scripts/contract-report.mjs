@@ -1,57 +1,33 @@
 // HITZ contract activity report generator.
 //
-// Two-step pipeline:
-//   1. `fetch`     — pull new contract events from Soroban RPC, append to
-//                    reports/data/events.jsonl. Idempotent + incremental;
-//                    the last cursor is persisted next to the data file.
-//   2. `generate`  — read the JSONL store, slice to a date window, and
-//                    write a markdown report to reports/YYYY-MM.md.
+// Reads the on-chain event store and writes a markdown report for one
+// month to reports/YYYY-MM.md.
 //
-// The JSONL store is committed to the repo so we never lose history when
-// the public RPC drops events out of its retention window (~24h on most
-// nodes). Each cron run extends the store; older data is never lost.
+// The store lives in Cloudflare D1 (`hitz-data`). The Worker's ingestion
+// cron (functions/_lib/ingest.ts) pulls new contract events from Soroban
+// RPC every 5 minutes and enriches them (Horizon tx envelopes, Stellar
+// Expert contract metadata); this script reads it all back through the
+// Worker's public read API (functions/api/data.ts). It used to be a
+// git-committed JSONL file in reports/data/, appended to by a daily
+// GitHub Action — see reports/README.md.
 //
 // Usage:
-//   node scripts/contract-report.mjs fetch
 //   node scripts/contract-report.mjs generate            # current month
 //   node scripts/contract-report.mjs generate 2026-05    # explicit month
-//   node scripts/contract-report.mjs all                 # fetch + generate
 //
 // Env overrides:
-//   RPC_URL           — default https://soroban-rpc.mainnet.stellar.gateway.fm
+//   REPORTS_API_BASE  — default https://skyhitz.io (use http://localhost:8787
+//                       against `wrangler dev`)
 //   HITZ_CONTRACT_ID  — default CBAPZAZNNB4X3VPXV2LYA5RMV7XHXIVREES2GG7R5GUXDZ4R4CKOY4EU
-//   START_LEDGER      — first-run only: starting ledger if no cursor yet
 
-import {
-  appendFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-
-import * as StellarSdk from "@stellar/stellar-sdk";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..");
 const reportsDir = join(repoRoot, "reports");
-const dataDir = join(reportsDir, "data");
-const dataFile = join(dataDir, "events.jsonl");
-const cursorFile = join(dataDir, "cursor.json");
-// Disk cache of Stellar Expert contract metadata — keyed by C-address.
-// Creator/created are immutable, so we don't need a TTL; we only ever
-// fetch on cache miss. This keeps the monthly run from hammering the
-// Stellar Expert API and means the report is reproducible offline.
-const contractInfoFile = join(dataDir, "contract-info.json");
-// Disk cache of Horizon tx envelope info — keyed by tx hash. Lets us
-// know who initiated each tx (source account) and whether it was
-// fee-bumped (= routed through the sponsor's gateway = email user).
-const txInfoFile = join(dataDir, "tx-info.json");
-
-const RPC_URL =
-  process.env.RPC_URL ?? "https://soroban-rpc.mainnet.stellar.gateway.fm";
+const API_BASE = (process.env.REPORTS_API_BASE ?? "https://skyhitz.io").replace(/\/$/, "");
 const CONTRACT_ID =
   process.env.HITZ_CONTRACT_ID ??
   "CBAPZAZNNB4X3VPXV2LYA5RMV7XHXIVREES2GG7R5GUXDZ4R4CKOY4EU";
@@ -142,196 +118,38 @@ const KNOWN_CONTRACTS = {
 const SPONSOR = "GBER7ROBYH5NFFKXCDGTSMUKTDQ4U3MEUTUCPJRZZY6EYZVEFDBVNJNB";
 const ADMIN = "GCAETBNBFKVGLYFXKCLMKT6ZVHFXHRSDFSEW7ODIUJYC6R7H2QJ6OKGU";
 
-// ─── helpers ──────────────────────────────────────────────────────────
+// ─── data store (Worker read API over D1) ─────────────────────────────
 
-function ensureDirs() {
-  if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
-}
-
-function readCursor() {
-  if (!existsSync(cursorFile)) return null;
-  try {
-    return JSON.parse(readFileSync(cursorFile, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-function writeCursor(cursor) {
-  writeFileSync(cursorFile, JSON.stringify(cursor, null, 2) + "\n");
-}
-
-function readEvents() {
-  if (!existsSync(dataFile)) return [];
-  return readFileSync(dataFile, "utf8")
-    .split("\n")
-    .filter(Boolean)
-    .map((l) => JSON.parse(l));
-}
-
-// stellar-sdk's getEvents pre-decodes topic[] and value into ScVal
-// objects (not base64 strings). Pass them directly to scValToNative.
-// Addresses come back as G/C strings, ints as bigint, symbols as strings.
-function decodeScVal(scv) {
-  if (scv == null) return null;
-  // Defensive: if the SDK ever changes and hands us a raw string, decode.
-  if (typeof scv === "string") {
-    return StellarSdk.scValToNative(
-      StellarSdk.xdr.ScVal.fromXDR(scv, "base64")
-    );
-  }
-  return StellarSdk.scValToNative(scv);
-}
-
-// Soroban events from getEvents() come with topic[] + value. The first
-// topic is the event symbol — for events derived from #[contractevent]
-// structs in lib.rs, that's the snake-cased struct name with the `_event`
-// suffix dropped here for friendlier reporting (e.g. `transfer_event` →
-// `transfer`). Remaining topics + value depend on the event's schema.
-function parseEvent(evt) {
-  const topics = (evt.topic ?? []).map(decodeScVal);
-  const value = evt.value ? decodeScVal(evt.value) : null;
-  let name =
-    typeof topics[0] === "string" ? topics[0] : String(topics[0] ?? "");
-  if (name.endsWith("_event")) name = name.slice(0, -"_event".length);
-
-  return {
-    ledger: evt.ledger,
-    ts: evt.ledgerClosedAt, // ISO 8601
-    txHash: evt.txHash,
-    id: evt.id, // RPC cursor for this event
-    name,
-    topics: topics.slice(1),
-    data: value,
-    // JSON.stringify can't serialize bigint; coerce here so the JSONL
-    // store stays valid JSON. Consumers cast back as needed.
-    raw: undefined,
-  };
-}
-
-// JSON.stringify with bigint → string conversion. Soroban i128 / u128
-// decode to bigint via scValToNative.
-const jsonStringify = (obj) =>
-  JSON.stringify(obj, (_k, v) => (typeof v === "bigint" ? v.toString() : v));
-
-// A Soroban event cursor is "<toid>-<index>"; the TOID packs the ledger
-// sequence in its high 32 bits. We need this to know when pagination has
-// caught up to the chain tip. BigInt because the TOID exceeds 2^53.
-function cursorLedger(cur) {
-  if (!cur || typeof cur !== "string") return null;
-  try {
-    return Number(BigInt(cur.split("-")[0]) >> 32n);
-  } catch {
-    return null;
-  }
-}
-
-// Load every event id already in the store. Used to dedup on fetch so a
-// re-pull (overlapping ledger range, restart after a stale cursor) never
-// double-writes a row.
-function loadEventIds() {
-  const ids = new Set();
-  for (const e of readEvents()) if (e.id) ids.add(e.id);
-  return ids;
-}
-
-// ─── fetch ────────────────────────────────────────────────────────────
-
-async function fetchEvents() {
-  ensureDirs();
-  const server = new StellarSdk.rpc.Server(RPC_URL);
-
-  let pageCursor = readCursor()?.cursor;
-  const seenIds = loadEventIds();
-
-  // The SDK requires `startLedger` on every getEvents call even when a
-  // cursor is supplied (the cursor supersedes it; startLedger just has
-  // to be a valid in-window floor). Track it off the cursor so it never
-  // drifts below retention mid-run.
-  let startLedger;
-  if (process.env.START_LEDGER) {
-    startLedger = Number(process.env.START_LEDGER);
-  } else if (pageCursor) {
-    startLedger =
-      cursorLedger(pageCursor) ?? readEvents().at(-1)?.ledger ?? 1;
-  } else {
-    const latest = await server.getLatestLedger();
-    // Empty store: start near the retention floor. Public RPC keeps
-    // ~7 days of events; 100k ledgers (~6d) stays safely inside it.
-    startLedger = Math.max(1, latest.sequence - 100_000);
-  }
-
-  const filter = { type: "contract", contractIds: [CONTRACT_ID] };
-
-  let totalNew = 0;
-  let totalDup = 0;
-  let pages = 0;
-
-  while (true) {
-    // Keep startLedger pinned to the cursor so a long run can't outrun
-    // the retention window.
-    if (pageCursor) {
-      startLedger = cursorLedger(pageCursor) ?? startLedger;
-    }
-    const req = {
-      startLedger,
-      pagination: {
-        limit: 200,
-        ...(pageCursor ? { cursor: pageCursor } : {}),
-      },
-      filters: [filter],
-    };
-
-    let page;
+async function apiGet(path) {
+  const url = `${API_BASE}${path}`;
+  for (let attempt = 0; ; attempt++) {
     try {
-      page = await server.getEvents(req);
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(30_000),
+        headers: { Accept: "application/json" },
+      });
+      if (res.ok) return await res.json();
+      if (attempt >= 3 || (res.status !== 429 && res.status < 500)) {
+        throw new Error(`HTTP ${res.status}`);
+      }
     } catch (err) {
-      // Stale cursor or startLedger below retention. Restart from the
-      // retention floor — dedup makes the overlapping re-pull safe.
-      if (/within.*range|outside.*window|must be/i.test(String(err))) {
-        const latest = await server.getLatestLedger();
-        startLedger = Math.max(1, latest.sequence - 100_000);
-        pageCursor = undefined;
-        console.warn(
-          `[contract-report] cursor/startLedger stale — restarting from ledger ${startLedger} (dedup protects against overlap)`
-        );
-        continue;
-      }
-      throw err;
+      if (attempt >= 3) throw new Error(`[contract-report] ${url} failed: ${err instanceof Error ? err.message : err}`);
     }
-    pages++;
-
-    for (const evt of page.events ?? []) {
-      const parsed = parseEvent(evt);
-      if (parsed.id && seenIds.has(parsed.id)) {
-        totalDup++;
-        continue;
-      }
-      if (parsed.id) seenIds.add(parsed.id);
-      appendFileSync(dataFile, jsonStringify(parsed) + "\n");
-      totalNew++;
-    }
-
-    if (page.cursor) {
-      pageCursor = page.cursor;
-      writeCursor({ cursor: pageCursor, updatedAt: new Date().toISOString() });
-    }
-
-    // CRITICAL: getEvents scans in bounded ledger chunks (~10k ledgers).
-    // A short — or even empty — page means "end of this chunk", NOT
-    // "end of data". The ONLY correct stop condition is the cursor's
-    // ledger reaching the chain tip (latestLedger). The old code stopped
-    // on the first sub-200 page and silently skipped everything after.
-    const cl = cursorLedger(page.cursor);
-    const tip = page.latestLedger;
-    if (!page.cursor || cl == null || (tip != null && cl >= tip)) {
-      break;
-    }
+    await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
   }
+}
 
-  console.log(
-    `[contract-report] fetch complete: ${totalNew} new, ${totalDup} duplicate(s) skipped, ${pages} page(s)`
-  );
+// Every stored event, in id (= chronological) order — the same rows the
+// old events.jsonl held.
+async function readEvents() {
+  const events = [];
+  let after = "";
+  for (;;) {
+    const page = await apiGet(`/api/data/events?limit=1000&after=${encodeURIComponent(after)}`);
+    events.push(...page.events);
+    if (!page.next) return events;
+    after = page.next;
+  }
 }
 
 // ─── report generation ───────────────────────────────────────────────
@@ -655,20 +473,12 @@ function isContractAddr(addr) {
 // infra (creator == DAO/team) at a glance, without hand-investigation.
 //
 // All fetches are best-effort: API failures degrade to "unknown" rather
-// than blocking the report. The cache is committed to the repo so
-// repeated runs are deterministic and don't hammer the API.
+// than blocking the report. The cache lives in D1 (filled by the Worker
+// cron as contracts first appear) so repeated runs are deterministic and
+// don't hammer the API; a miss here is looked up live for this run only.
 
-function readContractCache() {
-  if (!existsSync(contractInfoFile)) return {};
-  try {
-    return JSON.parse(readFileSync(contractInfoFile, "utf8"));
-  } catch {
-    return {};
-  }
-}
-
-function writeContractCache(cache) {
-  writeFileSync(contractInfoFile, JSON.stringify(cache, null, 2) + "\n");
+async function readContractCache() {
+  return apiGet("/api/data/contract-info");
 }
 
 async function fetchContractInfo(id, cache) {
@@ -715,19 +525,18 @@ async function fetchContractInfo(id, cache) {
 // care about the difference between:
 //   - tx source = sponsor → fee-bumped gateway call from an email user
 //   - tx source = anyone else → direct wallet user or a contract owner
-// Cached because tx envelopes are immutable once on-chain.
+// Cached (in D1, by the Worker cron) because tx envelopes are immutable
+// once on-chain; a miss here is looked up live for this run only.
 
-function readTxCache() {
-  if (!existsSync(txInfoFile)) return {};
-  try {
-    return JSON.parse(readFileSync(txInfoFile, "utf8"));
-  } catch {
-    return {};
+async function readTxCache() {
+  const cache = {};
+  let after = "";
+  for (;;) {
+    const page = await apiGet(`/api/data/tx-info?limit=2000&after=${encodeURIComponent(after)}`);
+    Object.assign(cache, page.items);
+    if (!page.next) return cache;
+    after = page.next;
   }
-}
-
-function writeTxCache(cache) {
-  writeFileSync(txInfoFile, JSON.stringify(cache, null, 2) + "\n");
 }
 
 async function fetchTxInfo(hash, cache) {
@@ -787,9 +596,8 @@ async function generateReport(yyyymm = currentYM()) {
   if (!YYYYMM_RE.test(yyyymm)) {
     throw new Error(`invalid month: ${yyyymm} (expected YYYY-MM)`);
   }
-  ensureDirs();
   const [startISO, endISO] = monthBounds(yyyymm);
-  const allEvents = readEvents();
+  const allEvents = await readEvents();
   const events = allEvents.filter((e) => inWindow(e.ts, startISO, endISO));
 
   if (events.length === 0) {
@@ -877,11 +685,10 @@ async function generateReport(yyyymm = currentYM()) {
     if (isContractAddr(e.topics[0])) allContractAddrs.add(e.topics[0]);
   }
 
-  const contractCache = readContractCache();
+  const contractCache = await readContractCache();
   await Promise.all(
     [...allContractAddrs].map((id) => fetchContractInfo(id, contractCache))
   );
-  writeContractCache(contractCache);
 
   // Group transfers by tx hash — needed for both notable-tx rendering
   // and vault tx flow context. Build the per-tx structure once.
@@ -907,9 +714,8 @@ async function generateReport(yyyymm = currentYM()) {
   }
   const notableTxs = [...txsByHash.keys()];
 
-  const txCache = readTxCache();
+  const txCache = await readTxCache();
   await Promise.all(notableTxs.map((h) => fetchTxInfo(h, txCache)));
-  writeTxCache(txCache);
 
   // The describeAddress helper takes this ctx and produces consistent
   // labels everywhere. txSource is per-call (set when rendering a
@@ -1280,6 +1086,7 @@ async function generateReport(yyyymm = currentYM()) {
   );
   push("");
 
+  mkdirSync(reportsDir, { recursive: true });
   const outFile = join(reportsDir, `${yyyymm}.md`);
   writeFileSync(outFile, lines.join("\n"));
   console.log(`[contract-report] wrote ${outFile}`);
@@ -1293,19 +1100,17 @@ const arg = process.argv[3];
 (async () => {
   switch (cmd) {
     case "fetch":
-      await fetchEvents();
+      // Kept so old invocations don't fail: ingestion moved to the Worker cron.
+      console.log(
+        "[contract-report] `fetch` is no longer needed — the Worker cron ingests events into D1 every 5 minutes."
+      );
       break;
     case "generate":
-      await generateReport(arg);
-      break;
     case "all":
-      await fetchEvents();
       await generateReport(arg);
       break;
     default:
-      console.error(
-        "usage: contract-report.mjs <fetch|generate [YYYY-MM]|all [YYYY-MM]>"
-      );
+      console.error("usage: contract-report.mjs generate [YYYY-MM]");
       process.exit(1);
   }
 })().catch((err) => {

@@ -495,6 +495,41 @@ export async function getSponsorXlmBalance(env: Env): Promise<string> {
   return native.balance;
 }
 
+// ─── Read-only contract views ────────────────────────────────────────────
+
+// Any syntactically valid account works as the source of a simulation —
+// nothing is signed or submitted, and the account needn't exist.
+const VIEW_SOURCE = "GBZXN7PIRZGNMHGA7MUUUF4GWPY5AYPV6LY4UV2GL6VJGIQRXFDNMADI";
+
+/**
+ * Call a read-only contract method via simulation and return the decoded
+ * native value (`scValToNative`). Throws on simulation error. Used by the
+ * ingestion cron for `list_pools`, `get_tokens` and token `name()`.
+ */
+export async function simulateView(
+  env: Env,
+  contractId: string,
+  method: string,
+  args: StellarSdk.xdr.ScVal[] = []
+): Promise<unknown> {
+  const server = new StellarSdk.rpc.Server(env.RPC_URL);
+  const tx = new StellarSdk.TransactionBuilder(new StellarSdk.Account(VIEW_SOURCE, "0"), {
+    fee: "100",
+    networkPassphrase: env.NETWORK_PASSPHRASE,
+  })
+    .addOperation(new StellarSdk.Contract(contractId).call(method, ...args))
+    .setTimeout(30)
+    .build();
+  const sim = await server.simulateTransaction(tx);
+  if (StellarSdk.rpc.Api.isSimulationError(sim)) {
+    throw new Error(`${method} simulation failed: ${sim.error}`);
+  }
+  if (!StellarSdk.rpc.Api.isSimulationSuccess(sim) || !sim.result) {
+    throw new Error(`${method} simulation returned no result`);
+  }
+  return StellarSdk.scValToNative(sim.result.retval);
+}
+
 // ─── Account inspection (Horizon) ────────────────────────────────────────
 
 export interface BalanceLine {

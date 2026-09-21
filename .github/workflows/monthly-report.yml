@@ -1,13 +1,13 @@
 # Monthly on-chain activity report for the HITZ contract.
 #
-# Runs at 12:05 UTC on the 1st of every month: pulls new contract events
-# from Soroban RPC, generates a markdown report for the *previous* month,
-# and commits both the report and the updated event store back to main.
+# Runs at 12:05 UTC on the 1st of every month: generates a markdown report
+# for the *previous* month and commits it to main.
 #
-# The event store (reports/data/events.jsonl) is append-only and durable
-# across runs — each invocation extends history forward from the saved
-# cursor, so no data is ever lost even though public RPC nodes only
-# retain a small window.
+# The event data lives in Cloudflare D1 (`hitz-data`), kept current by the
+# Worker's ingestion cron every 5 minutes. The generator reads it through
+# the Worker's public read API (https://skyhitz.io/api/data/*), so this job
+# needs no Cloudflare credentials and no npm install — the script uses only
+# Node built-ins. See reports/README.md.
 #
 # Trigger manually any time via the Actions tab → "Run workflow".
 
@@ -33,23 +33,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Need full history so we can commit back the updated jsonl.
-          fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: pnpm
-          cache-dependency-path: frontend/pnpm-lock.yaml
-
-      - name: Install dependencies
-        working-directory: frontend
-        run: pnpm install --frozen-lockfile
 
       # Pipe untrusted input (workflow_dispatch.month) through an env var
       # rather than ${{ ... }} interpolation in the shell. This is GitHub's
@@ -74,17 +62,12 @@ jobs:
           fi
           echo "ym=$ym" >> "$GITHUB_OUTPUT"
 
-      - name: Fetch new contract events
-        working-directory: frontend
-        run: pnpm contract-report fetch
-
       - name: Generate report
-        working-directory: frontend
         env:
           YM: ${{ steps.month.outputs.ym }}
-        run: pnpm contract-report generate "$YM"
+        run: node frontend/scripts/contract-report.mjs generate "$YM"
 
-      - name: Commit updated store and report
+      - name: Commit report
         env:
           YM: ${{ steps.month.outputs.ym }}
         run: |
@@ -94,6 +77,7 @@ jobs:
           fi
           git config user.name  'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
-          git add reports/
+          git add "reports/$YM.md"
           git commit -m "chore(reports): monthly HITZ activity $YM"
+          git pull --rebase --autostash origin "$(git rev-parse --abbrev-ref HEAD)" || true
           git push

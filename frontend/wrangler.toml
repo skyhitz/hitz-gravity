@@ -46,6 +46,20 @@ run_worker_first = ["/api/*"]
 binding = "MAGIC_LINKS"
 id = "d3cc545193ba45efaac265c9a72b2a65"
 
+# On-chain data store: HITZ contract events + report caches (formerly the
+# git-committed reports/data/ files) and HITZ/USD price history. Schema in
+# migrations/; apply with `npx wrangler d1 migrations apply hitz-data --remote`.
+[[d1_databases]]
+binding = "DB"
+database_name = "hitz-data"
+database_id = "4216918c-c4e0-4b49-a10e-57395e8856af"
+migrations_dir = "migrations"
+
+# Ingestion cron (functions/_lib/ingest.ts). Soroban RPC keeps ~7 days of
+# events; every 5 minutes leaves a wide margin and keeps the price feed fresh.
+[triggers]
+crons = ["*/5 * * * *"]
+
 # Native Cloudflare email binding — replaces the old MailChannels HTTP
 # call. No `destination_address` / `allowed_destination_addresses` means
 # we can send to any recipient, which we need since magic-link + claim

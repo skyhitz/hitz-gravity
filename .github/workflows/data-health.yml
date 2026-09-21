@@ -1,0 +1,67 @@
+# Daily health check for the on-chain data pipeline.
+#
+# Event ingestion moved from this repo (a daily job that appended to
+# reports/data/events.jsonl) into the Cloudflare Worker's cron, which writes
+# to D1 every 5 minutes — see reports/README.md. Soroban RPC keeps only
+# ~7 days of events, so a silently stalled cron would eventually lose
+# history for good. This job fails (and GitHub emails the repo owners)
+# if either feed stops moving:
+#
+#   • HITZ event ingestion — the `hitz-rpc` cursor in /api/data/status
+#   • HITZ/USD price feed  — `asOf` in /api/price/history
+
+name: Daily Data Health Check
+
+on:
+  schedule:
+    # 06:17 UTC daily. Odd minute avoids the top-of-hour cron stampede.
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Check ingestion freshness
+        env:
+          API_BASE: https://skyhitz.io
+          # The cron runs every 5 minutes; 2 hours of silence means it's broken.
+          MAX_STALE_MINUTES: "120"
+        run: |
+          node --input-type=module <<'JS'
+          const base = process.env.API_BASE;
+          const maxMs = Number(process.env.MAX_STALE_MINUTES) * 60_000;
+          const get = async (path) => {
+            const res = await fetch(base + path, { headers: { Accept: "application/json" } });
+            if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
+            return res.json();
+          };
+          const status = await get("/api/data/status");
+          const price = await get("/api/price/history");
+          const rpc = status.cursors.find((c) => c.source === "hitz-rpc");
+          const checks = [
+            ["HITZ event ingestion", rpc?.updated_at],
+            ["HITZ/USD price feed", price.asOf],
+          ];
+          console.log("latest event:", JSON.stringify(status.latestEvent));
+          console.log("row counts:", JSON.stringify(status.counts));
+          let ok = true;
+          for (const [name, at] of checks) {
+            const age = at ? Date.now() - Date.parse(at) : Infinity;
+            const mins = Math.round(age / 60_000);
+            if (age > maxMs) {
+              console.log(`::error::${name} is stale — last update ${at ?? "never"} (${mins} min ago)`);
+              ok = false;
+            } else {
+              console.log(`✓ ${name}: updated ${mins} min ago (${at})`);
+            }
+          }
+          if (!ok) process.exit(1);
+          JS

@@ -15,6 +15,10 @@ export interface Env {
   // KV binding — see wrangler.toml
   MAGIC_LINKS: KVNamespace;
 
+  // D1 `hitz-data` — on-chain event store, report caches and price
+  // history (schema in migrations/). Written by the cron in _lib/ingest.ts.
+  DB: D1Database;
+
   // Native Cloudflare `send_email` binding. Configured in wrangler.toml
   // with no destination restrictions (we mail arbitrary user-provided
   // addresses). Requires Email Routing to be enabled on the sender
