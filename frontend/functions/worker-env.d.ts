@@ -24,4 +24,9 @@ declare global {
     ): Promise<void>;
     delete(key: string): Promise<void>;
   }
+
+  // Cloudflare's per-colo HTTP cache.
+  interface CacheStorage {
+    readonly default: Cache;
+  }
 }

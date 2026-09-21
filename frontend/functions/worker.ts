@@ -20,6 +20,7 @@ import { POST as gatewayExecute } from "./api/gateway/execute";
 import { POST as gatewayNotify } from "./api/gateway/notify";
 import { POST as gatewayResolve } from "./api/gateway/resolve";
 import { GET as gatewaySponsor } from "./api/gateway/sponsor";
+import { GET as holders } from "./api/holders";
 import type { Env } from "./_lib/types";
 
 type Handler = (
@@ -42,6 +43,7 @@ const ROUTES: Record<string, Handler> = {
   "POST /api/gateway/notify": gatewayNotify,
   "POST /api/gateway/resolve": gatewayResolve,
   "GET /api/gateway/sponsor": gatewaySponsor,
+  "GET /api/holders": holders,
 };
 
 export default {

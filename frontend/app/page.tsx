@@ -24,6 +24,7 @@ import SmartSwap from "./components/scenarios/SmartSwap";
 import SacrificeRitual from "./components/SacrificeRitual";
 import SendToEmail from "./components/SendToEmail";
 import MonitorStatCards from "./components/MonitorStatCards";
+import HolderEcosystem from "./components/ecosystem/HolderEcosystem";
 import RegistryCardPair from "./components/Registry";
 import AdminTab from "./components/AdminTab";
 import ConsentModal, { CONSENT_KEY } from "./components/ConsentModal";
@@ -304,6 +305,7 @@ function MonitorPanel() {
         gap: 16,
       }}
     >
+      <HolderEcosystem />
       <MonitorStatCards />
       <AccountPulse />
       <RegistryCardPair />

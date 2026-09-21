@@ -573,6 +573,104 @@ input { color: var(--foreground); }
 .registry-row .actions .remove:hover { color: var(--red); }
 .registry-empty { padding: 16px; text-align: center; color: var(--muted); font-size: 12px; border: 1px dashed var(--border); border-radius: 10px; }
 
+/* ─── Holder ecosystem (Monitor tab + /ecosystem) ───────────────────────── */
+
+/* Card chrome */
+.eco-card { border: 1px solid var(--border); border-radius: 18px; background: var(--card); overflow: hidden; }
+.eco-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 20px 14px; }
+.eco-head .ttl-wrap { display: flex; align-items: center; gap: 10px; }
+.eco-head .dot { width: 7px; height: 7px; border-radius: 50%; }
+.eco-head h4 { margin: 0; font-size: 13px; font-weight: 500; color: var(--foreground); }
+.eco-head .count { font-family: var(--font-geist-mono), Menlo, monospace; font-size: 10px; color: var(--green); background: rgba(48,209,88,.1); padding: 2px 8px; border-radius: 999px; text-transform: uppercase; letter-spacing: .1em; }
+.eco-head .count.idle { color: var(--muted); background: var(--bg-2); }
+.eco-expand { font-size: 11px; color: var(--muted); text-decoration: none; }
+.eco-expand:hover { color: var(--foreground); }
+.eco-frame { height: 540px; border-top: 1px solid var(--border-soft); background: #07070a; }
+@media (max-width: 640px) { .eco-frame { height: 420px; } }
+.eco-full { position: fixed; inset: 0; background: #07070a; }
+
+/* Stage. Container queries (not viewport) so the compact layout follows the
+   stage's own width, the way the design's iframe embed did. */
+.eco { position: relative; width: 100%; height: 100%; overflow: hidden; background: #07070a; color: var(--foreground); font-size: 13px; container-type: inline-size; }
+.eco-stage { position: absolute; inset: 0; }
+.eco-stage canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+.eco-stage canvas:active { cursor: grabbing; }
+
+.eco-hd { position: absolute; top: 0; left: 0; right: 0; padding: 14px 16px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; pointer-events: none; background: linear-gradient(180deg, rgba(7,7,10,.85), transparent); }
+.eco-hd .t { font-size: 13px; font-weight: 500; }
+.eco-hd .s { font-size: 11px; color: var(--muted); margin-top: 3px; line-height: 1.5; max-width: 300px; }
+.eco-hd .s.warn { color: var(--orange); }
+.eco-stats { display: flex; gap: 16px; flex-shrink: 0; }
+.eco-stat .k { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .15em; }
+.eco-stat .v { font-family: var(--font-geist-mono), ui-monospace, Menlo, monospace; font-size: 13px; font-variant-numeric: tabular-nums; margin-top: 2px; }
+
+.eco-lg { position: absolute; left: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 5px; }
+.eco-lg button { display: flex; align-items: center; gap: 8px; background: rgba(20,20,22,.7); border: 1px solid var(--border); backdrop-filter: blur(10px); border-radius: 8px; padding: 6px 10px; color: var(--foreground); font: inherit; font-size: 11px; cursor: pointer; transition: opacity .15s, border-color .15s; }
+.eco-lg button:hover { border-color: var(--muted-soft); }
+.eco-lg button.off { opacity: .35; }
+.eco-lg .d { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.eco-lg .n { margin-left: auto; padding-left: 8px; font-family: var(--font-geist-mono), ui-monospace, Menlo, monospace; color: var(--muted); font-size: 10px; }
+
+.eco-ctl { position: absolute; right: 16px; bottom: 16px; display: flex; align-items: center; gap: 10px; }
+.eco-ctl .hint { font-size: 10px; color: var(--muted); }
+.eco-ctl button { background: rgba(20,20,22,.7); border: 1px solid var(--border); backdrop-filter: blur(10px); border-radius: 8px; padding: 6px 12px; color: var(--muted); font: inherit; font-size: 11px; cursor: pointer; }
+.eco-ctl button:hover { color: var(--foreground); border-color: var(--muted-soft); }
+
+.eco-tip { position: absolute; pointer-events: none; background: rgba(20,20,22,.95); border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; font-size: 11px; line-height: 1.5; z-index: 10; box-shadow: 0 12px 30px -8px rgba(0,0,0,.8); white-space: nowrap; }
+.eco-tip b { display: block; font-family: var(--font-geist-mono), ui-monospace, Menlo, monospace; font-weight: 500; font-size: 11px; }
+.eco-tip span { color: var(--muted); font-size: 10px; }
+
+.eco-panel { position: absolute; top: 108px; right: 16px; width: 290px; max-height: calc(100% - 124px); overflow-y: auto; z-index: 20; background: rgba(20,20,22,.94); backdrop-filter: blur(16px); border: 1px solid var(--border); border-radius: 14px; padding: 16px; box-shadow: 0 24px 60px -16px rgba(0,0,0,.9); animation: ecoPanelIn .2s ease-out both; }
+@keyframes ecoPanelIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+.eco-panel .x { position: absolute; top: 10px; right: 10px; background: 0; border: 0; color: var(--muted); font-size: 18px; line-height: 1; cursor: pointer; padding: 2px 6px; }
+.eco-panel .x:hover { color: var(--foreground); }
+.eco-panel .ph { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.eco-panel .pd { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.eco-panel .pt { font-size: 13px; font-weight: 500; }
+.eco-panel .ps { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .14em; margin-top: 2px; }
+.eco-panel .pa { font-size: 9.5px; color: var(--muted); word-break: break-all; line-height: 1.5; padding: 8px 10px; background: var(--bg-2); border-radius: 8px; margin-bottom: 12px; }
+.eco-panel .pg { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.eco-panel .pg > div { display: flex; flex-direction: column; gap: 3px; }
+.eco-panel .pg .k { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .12em; }
+.eco-panel .pg .v { font-family: var(--font-geist-mono), ui-monospace, Menlo, monospace; font-size: 12px; font-variant-numeric: tabular-nums; }
+.eco-panel .pw { margin-top: 12px; padding: 9px 11px; border-radius: 8px; background: rgba(191,90,242,.1); border: 1px solid rgba(191,90,242,.28); font-size: 11px; line-height: 1.5; color: #e0b8f7; }
+.eco-panel .pn { margin-top: 12px; padding: 9px 11px; border-radius: 8px; background: rgba(255,159,10,.08); border: 1px solid rgba(255,159,10,.25); font-size: 11px; line-height: 1.5; color: #ffc766; }
+.eco-panel .pi { margin-top: 12px; padding: 9px 11px; border-radius: 8px; background: var(--bg-2); border: 1px solid var(--border-soft); font-size: 11px; line-height: 1.5; color: var(--muted); }
+.eco-panel .pl { display: block; margin-top: 12px; font-size: 11px; text-decoration: none; color: var(--accent); }
+.eco-panel .pl:hover { color: var(--accent-hover); }
+
+/* Appearance tweaks. `bottom` bounds the panel above the legend so it
+   scrolls instead of overlapping it. */
+.eco-tk { position: absolute; left: 16px; top: 108px; bottom: 160px; z-index: 25; width: 212px; display: flex; flex-direction: column; pointer-events: none; }
+.eco-tk > * { pointer-events: auto; }
+.eco-tk-toggle { display: flex; align-items: center; gap: 7px; width: 100%; flex-shrink: 0; background: rgba(20,20,22,.7); border: 1px solid var(--border); backdrop-filter: blur(10px); border-radius: 8px; padding: 7px 10px; color: var(--muted); font: inherit; font-size: 11px; cursor: pointer; }
+.eco-tk-toggle:hover { color: var(--foreground); border-color: var(--muted-soft); }
+.eco-tk-toggle .cv { margin-left: auto; transition: transform .2s; }
+.eco-tk.open .eco-tk-toggle { color: var(--foreground); }
+.eco-tk.open .eco-tk-toggle .cv { transform: rotate(180deg); }
+.eco-tk-panel { margin-top: 6px; min-height: 0; overflow-y: auto; background: rgba(20,20,22,.92); backdrop-filter: blur(16px); border: 1px solid var(--border); border-radius: 12px; padding: 13px; box-shadow: 0 24px 60px -16px rgba(0,0,0,.9); }
+.eco-tk-hd { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .15em; margin-bottom: 7px; }
+.eco-tk-presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin: 0 0 12px; }
+.eco-tk-presets button { background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px; padding: 5px 0; color: var(--muted); font: inherit; font-size: 10px; cursor: pointer; }
+.eco-tk-presets button:hover { color: var(--foreground); }
+.eco-tk-presets button.on { border-color: var(--purple); color: var(--foreground); background: rgba(191,90,242,.12); }
+.eco-tk-row { margin-bottom: 11px; }
+.eco-tk-row:last-child { margin-bottom: 0; }
+.eco-tk-l { display: flex; justify-content: space-between; align-items: baseline; font-size: 10px; color: var(--muted); margin-bottom: 5px; }
+.eco-tk-v { color: var(--foreground); font-size: 10px; }
+.eco-tk-row input[type=range] { width: 100%; height: 2px; accent-color: var(--purple); cursor: pointer; margin: 0; }
+
+.eco-loading { position: absolute; left: 50%; top: 50%; transform: translate(-50%, 60px); font-size: 11px; color: var(--muted); letter-spacing: .04em; pointer-events: none; white-space: nowrap; }
+
+@container (max-width: 620px) {
+  .eco-panel { left: 16px; right: 16px; width: auto; top: auto; bottom: 64px; max-height: calc(100% - 140px); }
+  .eco-hd .s { display: none; }
+  .eco-hd .s.warn { display: block; }
+  .eco-stats { gap: 12px; }
+  .eco-tk { display: none; }
+  .eco-ctl .hint { display: none; }
+}
+
 /* ─── Admin tab ─────────────────────────────────────────────────────────── */
 
 .admin-header {
