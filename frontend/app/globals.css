@@ -15,6 +15,8 @@
   --orange: #ff9f0a;
   --purple: #bf5af2;
   --yellow: #ffd60a;
+  /* Traction series. Validated for charts on --card (yellow is too light). */
+  --gold: #b38b0a;
   --muted: #8e8e93;
   --muted-soft: #5a5a5e;
 }
@@ -740,6 +742,30 @@ input { color: var(--foreground); }
 .liq-pools tbody tr:last-child > *, .liq-impact tbody tr:last-child > * { border-bottom: 0; }
 .liq-pools a { color: var(--accent); text-decoration: none; }
 .liq-pools a:hover { color: var(--accent-hover); }
+
+/* Traction card */
+.mcard-meta { font-size: 11px; color: var(--muted); }
+.mcard-section { margin: 18px 0 8px; font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .15em; }
+.mcol { position: relative; outline: none; }
+.mcol svg { display: block; max-width: 100%; overflow: visible; }
+.mcol .base { stroke: var(--border-soft); stroke-width: 1; }
+.mcol .hit { fill: transparent; }
+.mcol .bar { fill: var(--series); }
+.mcol .partial .bar { fill-opacity: .55; }
+.mcol .on .bar { fill-opacity: 1; filter: brightness(1.15); }
+.mcol .val { fill: var(--foreground); font-size: 11px; font-family: var(--font-geist-mono), Menlo, monospace; font-variant-numeric: tabular-nums; }
+.mcol .lbl { fill: var(--muted); font-size: 10px; font-family: var(--font-geist-mono), Menlo, monospace; }
+.mcol .col { cursor: default; outline: none; }
+.mcol .col:focus-visible .hit { stroke: var(--accent); stroke-width: 1.5; }
+/* Collapses on its own width (not the viewport), so it fits any column. */
+.trc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); column-gap: 20px; }
+.trc-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+.trc-rows li { display: grid; grid-template-columns: 112px 1fr auto; align-items: center; gap: 10px; font-size: 12px; }
+.trc-rows .name { color: var(--foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trc-rows .bar { height: 6px; border-radius: 3px; background: var(--bg-2); overflow: hidden; }
+.trc-rows .bar > span { display: block; height: 100%; border-radius: 3px; background: var(--gold); }
+.trc-rows .num { font-family: var(--font-geist-mono), Menlo, monospace; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.trc-rows .num em { font-style: normal; color: var(--muted); margin-left: 4px; }
 
 /* ─── Admin tab ─────────────────────────────────────────────────────────── */
 

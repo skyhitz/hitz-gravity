@@ -9,9 +9,13 @@
 //     → { asOf, pools, totals, volume: {h24, d7, d30}, history: [[hour, tvlUsd]] }
 //     Per-pool depth, ±2% depth, cross-pool spread, swap volume and fees,
 //     and hourly TVL over the last 30 days.
+//   GET /api/traction
+//     → { asOf, since, window, months, allTime, channels, holders }
+//     Active non-infrastructure accounts, acquisition channels (email
+//     gateway / own wallet / received), and live holder distribution.
 
 import { cachedJson } from "../_lib/cache";
-import { LIQUIDITY_SNAPSHOT_KEY, PRICE_SNAPSHOT_KEY } from "../_lib/ingest";
+import { LIQUIDITY_SNAPSHOT_KEY, PRICE_SNAPSHOT_KEY, TRACTION_SNAPSHOT_KEY } from "../_lib/ingest";
 import { json } from "../_lib/http";
 import type { Env } from "../_lib/types";
 
@@ -42,3 +46,4 @@ function snapshotRoute(key: string, what: string) {
 
 export const GET_PRICE_HISTORY = snapshotRoute(PRICE_SNAPSHOT_KEY, "price history");
 export const GET_LIQUIDITY = snapshotRoute(LIQUIDITY_SNAPSHOT_KEY, "liquidity data");
+export const GET_TRACTION = snapshotRoute(TRACTION_SNAPSHOT_KEY, "traction data");

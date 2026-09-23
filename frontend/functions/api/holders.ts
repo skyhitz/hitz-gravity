@@ -16,23 +16,11 @@
 // address receives HITZ, and every visitor would otherwise page through
 // Stellar Expert on each Monitor-tab load.
 
+import { fetchContractDataIndex } from "../_lib/holders";
 import { json, serverError } from "../_lib/http";
 
 const CONTRACT_ID = "CBAPZAZNNB4X3VPXV2LYA5RMV7XHXIVREES2GG7R5GUXDZ4R4CKOY4EU";
-const EXPERT_API = "https://api.stellar.expert";
-const PAGE_LIMIT = 200;
-const MAX_PAGES = 50;
 const CACHE_SECONDS = 60;
-
-interface ExpertRecord {
-  key: string;
-  updated?: number;
-}
-
-interface ExpertPage {
-  _embedded?: { records?: ExpertRecord[] };
-  _links?: { next?: { href?: string } };
-}
 
 export async function GET(
   request: Request,
@@ -45,25 +33,7 @@ export async function GET(
   if (hit) return hit;
 
   try {
-    const records: ExpertRecord[] = [];
-    let path: string | null =
-      `/explorer/public/contract-data/${CONTRACT_ID}?order=asc&limit=${PAGE_LIMIT}`;
-    for (let page = 0; path && page < MAX_PAGES; page++) {
-      const res = await fetch(EXPERT_API + path, {
-        headers: { Accept: "application/json" },
-      });
-      if (!res.ok) throw new Error(`Stellar Expert HTTP ${res.status}`);
-      const body = (await res.json()) as ExpertPage;
-      const batch = body._embedded?.records ?? [];
-      for (const r of batch) records.push({ key: r.key, updated: r.updated });
-      const next = body._links?.next?.href;
-      // Only follow `next` from the same contract's listing.
-      path =
-        batch.length === PAGE_LIMIT && next?.startsWith(`/explorer/public/contract-data/${CONTRACT_ID}`)
-          ? next
-          : null;
-    }
-
+    const records = await fetchContractDataIndex(CONTRACT_ID);
     const response = json(
       { records },
       { headers: { "Cache-Control": `public, max-age=${CACHE_SECONDS}` } }

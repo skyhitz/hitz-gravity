@@ -13,6 +13,7 @@
 //   5. Quote prices          — Horizon hourly VWAP vs USDC
 //   6. Price series          — recompute changed hours → price_hourly + snapshot
 //   7. Liquidity             — depth, volume, fees, TVL trend (last 30 days) → snapshot
+//   8. Traction              — active accounts, acquisition channels, holders (hourly) → snapshot
 
 import * as StellarSdk from "@stellar/stellar-sdk";
 import { existing, getCursor, insertMany, setCursor } from "./db";
@@ -32,7 +33,9 @@ import {
   type QuoteKind,
   type ReservePoint,
 } from "./price-model";
-import { simulateView } from "./stellar";
+import { readAllBalances } from "./holders";
+import { getSponsorAddress, simulateView } from "./stellar";
+import { summarizeTraction, type HolderBalance } from "./traction-model";
 import type { Env } from "./types";
 
 const STELLAR_EXPERT = "https://api.stellar.expert/explorer/public";
@@ -47,6 +50,7 @@ const QUOTE_PAGES = 2;
 
 export const PRICE_SNAPSHOT_KEY = "price-history";
 export const LIQUIDITY_SNAPSHOT_KEY = "liquidity";
+export const TRACTION_SNAPSHOT_KEY = "traction";
 
 /** Liquidity metrics look back 30 days: bounded reads no matter how old the pools get. */
 const LIQUIDITY_WINDOW_S = 30 * 86_400;
@@ -81,6 +85,7 @@ export async function runIngest(env: Env): Promise<Record<string, unknown>> {
   });
   await step("price", () => rebuildPrice(env, changedFrom));
   await step("liquidity", () => rebuildLiquidity(env, changedFrom));
+  await step("traction", () => rebuildTraction(env));
   return report;
 }
 
@@ -603,4 +608,105 @@ async function rebuildLiquidity(env: Env, changedFrom: number | null) {
     .bind(LIQUIDITY_SNAPSHOT_KEY, JSON.stringify(snapshot), snapshot.asOf)
     .run();
   return { tvlUsd: snapshot.totals.tvlUsd, volume30dUsd: snapshot.volume.d30.usd, points: snapshot.history.length };
+}
+
+// ─── 8. Traction ─────────────────────────────────────────────────────────────
+// Full scans of hitz_events, so this runs at most once an hour — traction
+// doesn't need 5-minute freshness and D1 reads stay low.
+
+const PEOPLE_TXS_SQL = (infraCount: number) => `
+  WITH t AS (
+    SELECT ts, tx_hash, json_extract(topics, '$[0]') AS a, json_extract(topics, '$[1]') AS b
+    FROM hitz_events WHERE name = 'transfer'
+  ),
+  g AS (
+    SELECT ts, tx_hash, a AS addr FROM t WHERE a LIKE 'G%'
+    UNION ALL
+    SELECT ts, tx_hash, b FROM t WHERE b LIKE 'G%'
+  )
+  SELECT g.ts, g.tx_hash, g.addr,
+    CASE WHEN i.info IS NULL THEN NULL
+         WHEN json_extract(i.info, '$.sourceAccount') = ?1 OR json_extract(i.info, '$.feeAccount') = ?1 THEN 1
+         ELSE 0 END AS gateway,
+    COALESCE(json_extract(i.info, '$.innerSource'), json_extract(i.info, '$.sourceAccount')) AS source
+  FROM g LEFT JOIN tx_info i ON i.hash = g.tx_hash
+  WHERE g.addr NOT IN (${Array.from({ length: infraCount }, (_, i) => `?${i + 2}`).join(", ") || "''"})`;
+
+async function rebuildTraction(env: Env) {
+  const nowMs = Date.now();
+  const row = await env.DB.prepare("SELECT updated_at FROM snapshots WHERE key = ?")
+    .bind(TRACTION_SNAPSHOT_KEY)
+    .first<{ updated_at: string }>();
+  if (row && hourOf(Date.parse(row.updated_at) / 1000) === hourOf(nowMs / 1000)) {
+    return { skipped: "fresh this hour" };
+  }
+
+  const [pools, routers, limit] = await Promise.all([
+    simulateView(env, env.HITZ_CONTRACT_ID, "list_pools") as Promise<string[]>,
+    simulateView(env, env.HITZ_CONTRACT_ID, "list_routers") as Promise<string[]>,
+    simulateView(env, env.HITZ_CONTRACT_ID, "safety_limit"),
+  ]);
+  // The gateway sponsor is derived from MASTER_SECRET; without it (local
+  // dev) email-gateway numbers are reported as unknown, never guessed.
+  let sponsor: string | null = null;
+  try {
+    sponsor = await getSponsorAddress(env);
+  } catch {
+    sponsor = null;
+  }
+  const routerSet = new Set([...routers, ...(sponsor ? [sponsor] : [])]);
+  const poolSet = new Set(pools);
+  const infra = [...new Set([...poolSet, ...routerSet])].filter((a) => a.startsWith("G"));
+
+  const windowStart = new Date(nowMs - 30 * 86_400_000).toISOString();
+  const [peopleRes, monthRes, windowRes, sinceRes] = await env.DB.batch([
+    env.DB.prepare(PEOPLE_TXS_SQL(infra.length)).bind(sponsor ?? "", ...infra),
+    env.DB.prepare("SELECT substr(ts, 1, 7) AS m, count(DISTINCT tx_hash) AS n FROM hitz_events GROUP BY m"),
+    env.DB.prepare("SELECT count(DISTINCT tx_hash) AS n FROM hitz_events WHERE ts >= ?").bind(windowStart),
+    env.DB.prepare("SELECT min(ts) AS since FROM hitz_events"),
+  ]);
+  const people = peopleRes.results as { ts: string; tx_hash: string; addr: string; gateway: number | null; source: string | null }[];
+  const since = (sinceRes.results[0] as { since: string | null })?.since;
+  if (!since) return { skipped: "no events yet" };
+
+  const balances = await readAllBalances(env);
+  const holders: HolderBalance[] = [...balances].map(([address, hitz]) => ({
+    address,
+    hitz,
+    role: routerSet.has(address)
+      ? "router"
+      : poolSet.has(address)
+        ? address.startsWith("G")
+          ? "treasury"
+          : "amm"
+        : address.startsWith("G")
+          ? "person"
+          : "contract",
+  }));
+
+  const snapshot = summarizeTraction({
+    peopleTxs: people.map((r) => ({
+      ts: r.ts,
+      txHash: r.tx_hash,
+      addr: r.addr,
+      gateway: sponsor === null || r.gateway === null ? null : r.gateway === 1,
+      source: r.source ?? null,
+    })),
+    monthTxs: Object.fromEntries((monthRes.results as { m: string; n: number }[]).map((r) => [r.m, r.n])),
+    windowTxs: (windowRes.results[0] as { n: number })?.n ?? 0,
+    holders,
+    safetyLimit: Number(limit) / 1e7,
+    nowMs,
+    since,
+    gatewayKnown: sponsor !== null,
+    asOf: new Date(nowMs).toISOString(),
+  });
+  await env.DB.prepare("INSERT OR REPLACE INTO snapshots (key, json, updated_at) VALUES (?, ?, ?)")
+    .bind(TRACTION_SNAPSHOT_KEY, JSON.stringify(snapshot), snapshot.asOf)
+    .run();
+  return {
+    activeAccounts30d: snapshot.window.activePeople,
+    holders: snapshot.holders.people,
+    gatewayKnown: sponsor !== null,
+  };
 }
