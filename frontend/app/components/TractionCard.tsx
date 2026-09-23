@@ -259,7 +259,7 @@ function TractionBody({
       </div>
 
       <p className="mcard-foot">
-        Accounts are G-addresses outside the registered pools, routers and treasury — not verified people; one person
+        Accounts are G-addresses outside the registered pools, routers and treasury, not verified people; one person
         can run several (several recent wallets are sized just under L). Activity is from HITZ transfers since{" "}
         {fmtDate(Date.parse(data.since) / 1000)}, when the event store begins; holders and supply are read live from the
         ledger.
