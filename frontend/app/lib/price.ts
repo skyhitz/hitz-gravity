@@ -1,15 +1,13 @@
 /**
- * price.ts — HITZ/USD history for the Monitor tab's price card.
+ * price.ts — HITZ/USD history for the Monitor tab's price card, plus the
+ * money formatters the market cards share.
  *
  * The Worker's ingestion cron keeps an hourly, liquidity-weighted HITZ/USD
  * series in D1, built from every registered HITZ pool's on-chain reserves
- * (and XLM/USD from the Stellar DEX for XLM-quoted pools). This module just
- * reads the pre-rendered snapshot from `/api/price/history`.
- *
- * `next dev` doesn't run the Worker, so in development we read from
- * `NEXT_PUBLIC_API_ORIGIN` (e.g. a local `wrangler dev` on :8787), falling
- * back to production — the route is public and CORS-open.
+ * (and XLM/USD from the Stellar DEX for XLM-quoted pools).
  */
+
+import { fetchSnapshot } from "./api";
 
 export interface PriceHistory {
   /** ISO time the snapshot was last rebuilt. */
@@ -19,17 +17,9 @@ export interface PriceHistory {
   points: [number, number][];
 }
 
-function apiBase(): string {
-  if (process.env.NODE_ENV !== "development") return "";
-  return process.env.NEXT_PUBLIC_API_ORIGIN ?? "https://skyhitz.io";
-}
-
-/** Resolves null while the history is still being indexed (HTTP 503). */
-export async function fetchPriceHistory(): Promise<PriceHistory | null> {
-  const res = await fetch(`${apiBase()}/api/price/history`, { headers: { Accept: "application/json" } });
-  if (res.status === 503) return null;
-  if (!res.ok) throw new Error(`price history unavailable (HTTP ${res.status})`);
-  return (await res.json()) as PriceHistory;
+/** Resolves null while the history is still being indexed. */
+export function fetchPriceHistory(): Promise<PriceHistory | null> {
+  return fetchSnapshot<PriceHistory>("/api/price/history");
 }
 
 const usd = new Intl.NumberFormat("en-US", {
@@ -47,4 +37,20 @@ export function fmtUsd(price: number): string {
 export function fmtPct(change: number): string {
   const pct = change * 100;
   return `${pct >= 0 ? "+" : "−"}${Math.abs(pct).toFixed(Math.abs(pct) >= 100 ? 0 : 1)}%`;
+}
+
+const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+const cents = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/** Dollar amounts: `$7,001` from $1,000 up, `$161.31` below it, `<$0.01` for dust. */
+export function fmtMoney(v: number): string {
+  if (v > 0 && v < 0.01) return "<$0.01";
+  return Math.abs(v) >= 1000 ? money.format(v) : cents.format(v);
+}
+
+const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+
+/** Token amounts: `88.4M`, `9.8K`. */
+export function fmtCompact(v: number): string {
+  return compact.format(v);
 }

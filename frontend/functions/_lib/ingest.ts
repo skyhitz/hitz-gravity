@@ -12,6 +12,7 @@
 //   4. Pool reserves         — Stellar Expert pool events (update_reserves)
 //   5. Quote prices          — Horizon hourly VWAP vs USDC
 //   6. Price series          — recompute changed hours → price_hourly + snapshot
+//   7. Liquidity             — depth, volume, fees, TVL trend (last 30 days) → snapshot
 
 import * as StellarSdk from "@stellar/stellar-sdk";
 import { existing, getCursor, insertMany, setCursor } from "./db";
@@ -24,6 +25,8 @@ import {
   hourOf,
   mergeSnapshot,
   orientReserves,
+  summarizeLiquidity,
+  type LiquiditySnapshot,
   type PoolMeta,
   type PriceSnapshot,
   type QuoteKind,
@@ -43,6 +46,10 @@ const POOL_PAGES = 2;
 const QUOTE_PAGES = 2;
 
 export const PRICE_SNAPSHOT_KEY = "price-history";
+export const LIQUIDITY_SNAPSHOT_KEY = "liquidity";
+
+/** Liquidity metrics look back 30 days: bounded reads no matter how old the pools get. */
+const LIQUIDITY_WINDOW_S = 30 * 86_400;
 
 export async function runIngest(env: Env): Promise<Record<string, unknown>> {
   const report: Record<string, unknown> = {};
@@ -73,6 +80,7 @@ export async function runIngest(env: Env): Promise<Record<string, unknown>> {
     return r;
   });
   await step("price", () => rebuildPrice(env, changedFrom));
+  await step("liquidity", () => rebuildLiquidity(env, changedFrom));
   return report;
 }
 
@@ -480,44 +488,9 @@ async function rebuildPrice(env: Env, changedFrom: number | null) {
   }
   if (from === null) return { skipped: "no changes" };
 
-  const { results: poolRows } = await env.DB.prepare("SELECT * FROM pools WHERE active = 1").all<PoolRow>();
-  const pools = poolRows.map(toPoolMeta);
-  const priced = pools.filter((p) => p.quoteKind !== "unpriced");
+  const priced = await loadPricedPools(env);
   if (!priced.length) return { skipped: "no priced pools" };
-
-  const seedReserves = new Map<string, { hitz: bigint; quote: bigint }>();
-  const reserves: ReservePoint[] = [];
-  for (const p of priced) {
-    const seed = await env.DB.prepare(
-      "SELECT hitz, quote FROM pool_reserves WHERE pool = ? AND ts < ? ORDER BY ts DESC, event_id DESC LIMIT 1"
-    )
-      .bind(p.address, from)
-      .first<{ hitz: string; quote: string }>();
-    if (seed) seedReserves.set(p.address, { hitz: BigInt(seed.hitz), quote: BigInt(seed.quote) });
-    const { results } = await env.DB.prepare(
-      "SELECT event_id, ts, hitz, quote FROM pool_reserves WHERE pool = ? AND ts >= ? ORDER BY ts, event_id"
-    )
-      .bind(p.address, from)
-      .all<{ event_id: string; ts: number; hitz: string; quote: string }>();
-    for (const r of results) {
-      reserves.push({ pool: p.address, ts: r.ts, eventId: r.event_id, hitz: BigInt(r.hitz), quote: BigInt(r.quote) });
-    }
-  }
-
-  const seedQuotes = new Map<string, number>();
-  const quotes = new Map<string, [number, number][]>();
-  for (const quoteId of new Set(priced.map((p) => p.quoteId).filter((q): q is string => !!q))) {
-    const seed = await env.DB.prepare(
-      "SELECT usd FROM quote_prices WHERE quote = ? AND hour < ? ORDER BY hour DESC LIMIT 1"
-    )
-      .bind(quoteId, from)
-      .first<{ usd: number }>();
-    if (seed) seedQuotes.set(quoteId, seed.usd);
-    const { results } = await env.DB.prepare("SELECT hour, usd FROM quote_prices WHERE quote = ? AND hour >= ? ORDER BY hour")
-      .bind(quoteId, from)
-      .all<{ hour: number; usd: number }>();
-    quotes.set(quoteId, results.map((r) => [r.hour, r.usd]));
-  }
+  const { reserves, seedReserves, quotes, seedQuotes } = await loadWindow(env, priced, from);
 
   const hours = computeHours({
     pools: priced,
@@ -542,4 +515,92 @@ async function rebuildPrice(env: Env, changedFrom: number | null) {
     .bind(PRICE_SNAPSHOT_KEY, JSON.stringify(snapshot), snapshot.asOf)
     .run();
   return { from, hours: hours.length, points: snapshot.points.length };
+}
+
+async function loadPricedPools(env: Env): Promise<PoolMeta[]> {
+  const { results } = await env.DB.prepare("SELECT * FROM pools WHERE active = 1").all<PoolRow>();
+  return results.map(toPoolMeta).filter((p) => p.quoteKind !== "unpriced");
+}
+
+/**
+ * Reserves and quote prices from `from` onward, plus each series' last value
+ * before it (so forward-fill is right at the window start).
+ */
+async function loadWindow(env: Env, pools: PoolMeta[], from: number) {
+  const seedReserves = new Map<string, { hitz: bigint; quote: bigint }>();
+  const reserves: ReservePoint[] = [];
+  for (const p of pools) {
+    const seed = await env.DB.prepare(
+      "SELECT hitz, quote FROM pool_reserves WHERE pool = ? AND ts < ? ORDER BY ts DESC, event_id DESC LIMIT 1"
+    )
+      .bind(p.address, from)
+      .first<{ hitz: string; quote: string }>();
+    if (seed) seedReserves.set(p.address, { hitz: BigInt(seed.hitz), quote: BigInt(seed.quote) });
+    const { results } = await env.DB.prepare(
+      "SELECT event_id, ts, hitz, quote FROM pool_reserves WHERE pool = ? AND ts >= ? ORDER BY ts, event_id"
+    )
+      .bind(p.address, from)
+      .all<{ event_id: string; ts: number; hitz: string; quote: string }>();
+    for (const r of results) {
+      reserves.push({ pool: p.address, ts: r.ts, eventId: r.event_id, hitz: BigInt(r.hitz), quote: BigInt(r.quote) });
+    }
+  }
+
+  const seedQuotes = new Map<string, number>();
+  const quotes = new Map<string, [number, number][]>();
+  for (const quoteId of new Set(pools.map((p) => p.quoteId).filter((q): q is string => !!q))) {
+    const seed = await env.DB.prepare("SELECT usd FROM quote_prices WHERE quote = ? AND hour < ? ORDER BY hour DESC LIMIT 1")
+      .bind(quoteId, from)
+      .first<{ usd: number }>();
+    if (seed) seedQuotes.set(quoteId, seed.usd);
+    const { results } = await env.DB.prepare("SELECT hour, usd FROM quote_prices WHERE quote = ? AND hour >= ? ORDER BY hour")
+      .bind(quoteId, from)
+      .all<{ hour: number; usd: number }>();
+    quotes.set(quoteId, results.map((r) => [r.hour, r.usd]));
+  }
+  return { reserves, seedReserves, quotes, seedQuotes };
+}
+
+// ─── 7. Liquidity ────────────────────────────────────────────────────────────
+
+async function rebuildLiquidity(env: Env, changedFrom: number | null) {
+  const row = await env.DB.prepare("SELECT json FROM snapshots WHERE key = ?")
+    .bind(LIQUIDITY_SNAPSHOT_KEY)
+    .first<{ json: string }>();
+  const prev = row ? (JSON.parse(row.json) as LiquiditySnapshot) : null;
+  const nowTs = Math.floor(Date.now() / 1000);
+  // Volume windows slide with time, so rebuild at least once per hour even
+  // when nothing on chain changed.
+  const fresh = prev && hourOf(Date.parse(prev.asOf) / 1000) === hourOf(nowTs);
+  if (changedFrom === null && fresh) return { skipped: "no changes" };
+
+  const pools = await loadPricedPools(env);
+  if (!pools.length) return { skipped: "no priced pools" };
+
+  // Fees are fixed per pool contract: read once from chain, then carry forward.
+  const feeBps = new Map<string, number>();
+  for (const p of prev?.pools ?? []) if (p.feeBps !== null) feeBps.set(p.address, p.feeBps);
+  for (const p of pools) {
+    if (feeBps.has(p.address)) continue;
+    try {
+      feeBps.set(p.address, Number(await simulateView(env, p.address, "get_fee_fraction")));
+    } catch {
+      // Not an Aqua-style pool; volume still counts, fees show as unknown.
+    }
+  }
+
+  const fromHour = hourOf(nowTs - LIQUIDITY_WINDOW_S);
+  const data = await loadWindow(env, pools, fromHour);
+  const snapshot = summarizeLiquidity({
+    pools,
+    fromHour,
+    nowTs,
+    ...data,
+    feeBps,
+    asOf: new Date().toISOString(),
+  });
+  await env.DB.prepare("INSERT OR REPLACE INTO snapshots (key, json, updated_at) VALUES (?, ?, ?)")
+    .bind(LIQUIDITY_SNAPSHOT_KEY, JSON.stringify(snapshot), snapshot.asOf)
+    .run();
+  return { tvlUsd: snapshot.totals.tvlUsd, volume30dUsd: snapshot.volume.d30.usd, points: snapshot.history.length };
 }

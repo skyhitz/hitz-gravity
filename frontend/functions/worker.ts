@@ -22,7 +22,7 @@ import { POST as gatewayResolve } from "./api/gateway/resolve";
 import { GET as gatewaySponsor } from "./api/gateway/sponsor";
 import { GET as holders } from "./api/holders";
 import { GET_CONTRACT_INFO, GET_EVENTS, GET_STATUS, GET_TX_INFO } from "./api/data";
-import { GET as priceHistory } from "./api/price-history";
+import { GET_LIQUIDITY, GET_PRICE_HISTORY } from "./api/snapshots";
 import { runIngest } from "./_lib/ingest";
 import type { Env } from "./_lib/types";
 
@@ -51,7 +51,8 @@ const ROUTES: Record<string, Handler> = {
   "GET /api/data/tx-info": GET_TX_INFO,
   "GET /api/data/contract-info": GET_CONTRACT_INFO,
   "GET /api/data/status": GET_STATUS,
-  "GET /api/price/history": priceHistory,
+  "GET /api/price/history": GET_PRICE_HISTORY,
+  "GET /api/liquidity": GET_LIQUIDITY,
 };
 
 export default {

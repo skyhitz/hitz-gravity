@@ -26,6 +26,7 @@ import SendToEmail from "./components/SendToEmail";
 import MonitorStatCards from "./components/MonitorStatCards";
 import HolderEcosystem from "./components/ecosystem/HolderEcosystem";
 import HitzPriceCard from "./components/HitzPriceCard";
+import LiquidityCard from "./components/LiquidityCard";
 import RegistryCardPair from "./components/Registry";
 import AdminTab from "./components/AdminTab";
 import ConsentModal, { CONSENT_KEY } from "./components/ConsentModal";
@@ -308,6 +309,7 @@ function MonitorPanel() {
     >
       <HolderEcosystem />
       <HitzPriceCard />
+      <LiquidityCard />
       <MonitorStatCards />
       <AccountPulse />
       <RegistryCardPair />

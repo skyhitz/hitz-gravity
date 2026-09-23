@@ -45,6 +45,8 @@ export interface HourPoint {
   price: number;
   /** Pool address → share of the blend (0..1). */
   weights: Record<string, number>;
+  /** USD value of the quote side across priced pools (TVL is twice this). */
+  quoteSideUsd: number;
 }
 
 export interface PriceSnapshot {
@@ -179,7 +181,7 @@ export function computeHours(args: {
     if (den <= 0) continue;
     const weights: Record<string, number> = {};
     for (const [addr, w] of Object.entries(raw)) weights[addr] = Number((w / den).toFixed(4));
-    out.push({ hour: h, price: num / den, weights });
+    out.push({ hour: h, price: num / den, weights, quoteSideUsd: den });
   }
   return out;
 }
@@ -213,5 +215,207 @@ export function mergeSnapshot(
       weight: latest ? latest[p.address] ?? 0 : prevWeights.get(p.address) ?? 0,
     })),
     points,
+  };
+}
+
+// ─── Liquidity ───────────────────────────────────────────────────────────────
+//
+// Everything below is derived from the same reserve history as the price:
+// each `update_reserves` point is either a swap (the two reserves move in
+// opposite directions) or a liquidity add/remove (both move the same way).
+// Only swaps count as volume, so re-seeds and LP deposits never inflate it.
+
+export interface PoolLiquidity {
+  address: string;
+  pair: string;
+  quote: QuoteKind;
+  /** HITZ reserve (whole tokens). */
+  hitz: number;
+  /** Quote reserve (whole units of the quote token). */
+  quoteReserve: number;
+  /** USD per quote unit at snapshot time. */
+  quoteUsd: number;
+  /** Both sides in USD (twice the quote side for a balanced constant-product pool). */
+  tvlUsd: number;
+  priceUsd: number;
+  /** Share of total TVL (0..1). */
+  share: number;
+  /** Swap fee in basis points (Aqua `get_fee_fraction`, parts per 10,000). */
+  feeBps: number | null;
+  /** USD a buyer must spend to move this pool's price up 2% (fee-inclusive). */
+  depthUp2Usd: number;
+  /** USD value of HITZ a seller can sell before price drops 2% (fee-inclusive). */
+  depthDown2Usd: number;
+}
+
+export interface VolumeWindow {
+  usd: number;
+  trades: number;
+  feesUsd: number;
+}
+
+export interface LiquiditySnapshot {
+  asOf: string;
+  pools: PoolLiquidity[];
+  totals: {
+    tvlUsd: number;
+    hitzInPools: number;
+    /** (max − min) / mean of per-pool prices. */
+    spreadPct: number;
+    depthUp2Usd: number;
+    depthDown2Usd: number;
+  };
+  volume: { h24: VolumeWindow; d7: VolumeWindow; d30: VolumeWindow };
+  /** [hour (unix seconds), TVL in USD], hourly over the window. */
+  history: [number, number][];
+}
+
+/** Quote USD price in effect at `ts` (latest hourly value at or before its hour). */
+function quoteUsdAt(series: [number, number][], seed: number | undefined, ts: number): number | undefined {
+  const h = hourOf(ts);
+  let lo = 0;
+  let hi = series.length - 1;
+  let found: number | undefined = seed;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (series[mid][0] <= h) {
+      found = series[mid][1];
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return found;
+}
+
+function emptyWindow(): VolumeWindow {
+  return { usd: 0, trades: 0, feesUsd: 0 };
+}
+
+/**
+ * Liquidity snapshot for the window [fromHour, now]: current per-pool depth,
+ * swap volume and fees for 24h / 7d / 30d, ±2% depth, cross-pool spread and
+ * an hourly TVL series. Same inputs as `computeHours`, plus each pool's fee.
+ */
+export function summarizeLiquidity(args: {
+  pools: PoolMeta[];
+  fromHour: number;
+  nowTs: number;
+  reserves: ReservePoint[];
+  seedReserves: Map<string, { hitz: bigint; quote: bigint }>;
+  quotes: Map<string, [number, number][]>;
+  seedQuotes: Map<string, number>;
+  feeBps: Map<string, number>;
+  asOf: string;
+}): LiquiditySnapshot {
+  const priced = args.pools.filter((p) => p.quoteKind !== "unpriced");
+  const pricedSet = new Set(priced.map((p) => p.address));
+  const byAddress = new Map(priced.map((p) => [p.address, p]));
+  const reserves = args.reserves
+    .filter((r) => pricedSet.has(r.pool))
+    .sort((a, b) => (a.ts !== b.ts ? a.ts - b.ts : a.eventId < b.eventId ? -1 : a.eventId > b.eventId ? 1 : 0));
+  const quotes = new Map<string, [number, number][]>();
+  for (const [id, series] of args.quotes) quotes.set(id, [...series].sort((a, b) => a[0] - b[0]));
+  const usdAt = (pool: PoolMeta, ts: number): number | undefined =>
+    pool.quoteKind === "usd"
+      ? 1
+      : quoteUsdAt(quotes.get(pool.quoteId ?? "") ?? [], args.seedQuotes.get(pool.quoteId ?? ""), ts);
+
+  // Volume: classify every reserve change against the pool's previous state.
+  const volume = { h24: emptyWindow(), d7: emptyWindow(), d30: emptyWindow() };
+  const windows: [VolumeWindow, number][] = [
+    [volume.h24, args.nowTs - 86_400],
+    [volume.d7, args.nowTs - 7 * 86_400],
+    [volume.d30, args.nowTs - 30 * 86_400],
+  ];
+  const state = new Map(args.seedReserves);
+  for (const r of reserves) {
+    const prev = state.get(r.pool);
+    state.set(r.pool, { hitz: r.hitz, quote: r.quote });
+    if (!prev) continue;
+    const dH = r.hitz - prev.hitz;
+    const dQ = r.quote - prev.quote;
+    const isSwap = (dH > 0n && dQ < 0n) || (dH < 0n && dQ > 0n);
+    if (!isSwap) continue;
+    const pool = byAddress.get(r.pool)!;
+    const usd = usdAt(pool, r.ts);
+    if (!usd) continue;
+    const tradeUsd = (Number(dQ < 0n ? -dQ : dQ) / 1e7) * usd;
+    const fee = tradeUsd * ((args.feeBps.get(r.pool) ?? 0) / 10_000);
+    for (const [w, since] of windows) {
+      if (r.ts < since) continue;
+      w.usd += tradeUsd;
+      w.trades += 1;
+      w.feesUsd += fee;
+    }
+  }
+
+  // Current state per pool (the loop above left `state` at the latest reserves).
+  const up = Math.sqrt(1.02) - 1;
+  const down = 1 / Math.sqrt(0.98) - 1;
+  const pools: PoolLiquidity[] = [];
+  for (const pool of priced) {
+    const res = state.get(pool.address);
+    const usd = usdAt(pool, args.nowTs);
+    if (!res || !usd || res.hitz <= 0n || res.quote <= 0n) continue;
+    const hitz = Number(res.hitz) / 1e7;
+    const quoteReserve = Number(res.quote) / 1e7;
+    const priceUsd = (quoteReserve / hitz) * usd;
+    const feeBps = args.feeBps.get(pool.address) ?? null;
+    const gross = 1 / (1 - (feeBps ?? 0) / 10_000);
+    pools.push({
+      address: pool.address,
+      pair: pool.label,
+      quote: pool.quoteKind,
+      hitz,
+      quoteReserve,
+      quoteUsd: usd,
+      tvlUsd: 2 * quoteReserve * usd,
+      priceUsd,
+      share: 0,
+      feeBps,
+      depthUp2Usd: quoteReserve * up * gross * usd,
+      depthDown2Usd: hitz * down * gross * priceUsd,
+    });
+  }
+  const tvlUsd = pools.reduce((s, p) => s + p.tvlUsd, 0);
+  for (const p of pools) p.share = tvlUsd > 0 ? p.tvlUsd / tvlUsd : 0;
+  const prices = pools.map((p) => p.priceUsd);
+  const mean = prices.reduce((s, v) => s + v, 0) / (prices.length || 1);
+  const spreadPct = prices.length > 1 ? ((Math.max(...prices) - Math.min(...prices)) / mean) * 100 : 0;
+
+  const hours = computeHours({
+    pools: priced,
+    fromHour: args.fromHour,
+    toHour: hourOf(args.nowTs),
+    reserves,
+    seedReserves: args.seedReserves,
+    quotes,
+    seedQuotes: args.seedQuotes,
+  });
+
+  const money = (v: number) => Number(v.toFixed(2));
+  const win = (w: VolumeWindow): VolumeWindow => ({ usd: money(w.usd), trades: w.trades, feesUsd: Number(w.feesUsd.toFixed(4)) });
+  return {
+    asOf: args.asOf,
+    pools: pools
+      .map((p) => ({
+        ...p,
+        tvlUsd: money(p.tvlUsd),
+        priceUsd: round(p.priceUsd),
+        share: Number(p.share.toFixed(4)),
+        depthUp2Usd: money(p.depthUp2Usd),
+        depthDown2Usd: money(p.depthDown2Usd),
+      }))
+      .sort((a, b) => b.tvlUsd - a.tvlUsd),
+    totals: {
+      tvlUsd: money(tvlUsd),
+      hitzInPools: Math.round(pools.reduce((s, p) => s + p.hitz, 0)),
+      spreadPct: Number(spreadPct.toFixed(3)),
+      depthUp2Usd: money(pools.reduce((s, p) => s + p.depthUp2Usd, 0)),
+      depthDown2Usd: money(pools.reduce((s, p) => s + p.depthDown2Usd, 0)),
+    },
+    volume: { h24: win(volume.h24), d7: win(volume.d7), d30: win(volume.d30) },
+    history: hours.map((h): [number, number] => [h.hour, money(2 * h.quoteSideUsd)]),
   };
 }
