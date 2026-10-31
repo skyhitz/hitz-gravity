@@ -2,7 +2,7 @@
 extern crate std;
 
 use soroban_sdk::{
-    testutils::Address as _, testutils::Events as _, testutils::Ledger as _, Address, Env, String,
+    testutils::Address as _, testutils::Events as _, testutils::Ledger as _, Address, BytesN, Env, String,
 };
 
 use crate::{GravityToken, GravityTokenClient};
@@ -1421,4 +1421,316 @@ fn test_is_actually_vaulted_reflects_current_physics() {
     // Stored flag still true (no write yet); canonical view says false.
     assert!(client.is_account_vaulted(&whale));
     assert!(!client.is_actually_vaulted(&whale));
+}
+
+// ─────────────────────────────────────────────────────────────
+//  FAIL-SOFT INTEGRITY (real on-chain WASM upgrades)
+// ─────────────────────────────────────────────────────────────
+//
+//  A third party upgrading a registered pool / router must never halt
+//  HITZ. The token alerts once per new bytecode (IntegrityDriftEvent),
+//  keeps the classification and the TotalMass accounting exact, and
+//  only refuses one thing: letting the changed contract spend an
+//  allowance that holders granted to the old bytecode.
+
+const POOL_WASM_V1: &[u8] = include_bytes!("../test_fixtures/pool_v1.wasm");
+const POOL_WASM_V2: &[u8] = include_bytes!("../test_fixtures/pool_v2.wasm");
+
+/// `IntegrityDriftEvent`s the token emitted in the last invocation.
+fn drift_events(env: &Env, token: &Address) -> usize {
+    use soroban_sdk::xdr::{ContractEventBody, ScVal};
+    env.events()
+        .all()
+        .filter_by_contract(token)
+        .events()
+        .iter()
+        .filter(|e| {
+            let ContractEventBody::V0(body) = &e.body;
+            matches!(
+                body.topics.first(),
+                Some(ScVal::Symbol(s)) if s.0.to_utf8_string_lossy() == "integrity_drift_event"
+            )
+        })
+        .count()
+}
+
+/// A real contract running `POOL_WASM_V1`, plus both uploaded hashes.
+fn deploy_wasm_contract(env: &Env) -> (Address, BytesN<32>, BytesN<32>) {
+    let v1 = env.deployer().upload_contract_wasm(POOL_WASM_V1);
+    let v2 = env.deployer().upload_contract_wasm(POOL_WASM_V2);
+    let addr = env.register(POOL_WASM_V1, ());
+    (addr, v1, v2)
+}
+
+/// The contract's owner upgrades it in place (what Aquarius did).
+fn owner_upgrades(env: &Env, addr: &Address, hash: &BytesN<32>) {
+    env.as_contract(addr, || {
+        env.deployer().update_current_contract_wasm(hash.clone())
+    });
+}
+
+/// Register a plain pool holding 1,000,000 HITZ so L = 1,000 HITZ and
+/// small test balances stay unvaulted.
+fn add_mass(env: &Env, client: &GravityTokenClient) {
+    let mass_pool = Address::generate(env);
+    client.register_pool_address(&mass_pool);
+    client.mint(&mass_pool, &(1_000_000 * H));
+}
+
+#[test]
+fn test_third_party_pool_upgrade_does_not_halt_transfers() {
+    let (env, _admin, client) = setup_env();
+    let token = client.address.clone();
+    let (pool, v1, v2) = deploy_wasm_contract(&env);
+    client.register_pool_address(&pool);
+    assert_eq!(client.pool_wasm_hash(&pool), Some(v1));
+
+    let alice = Address::generate(&env);
+    client.mint(&alice, &(1_000 * H));
+    client.mint(&pool, &(10_000 * H));
+    let mass_before = client.total_mass();
+
+    owner_upgrades(&env, &pool, &v2);
+
+    // Into the pool (a sell): goes through, alerts once.
+    client.transfer(&alice, &pool, &(10 * H));
+    assert_eq!(drift_events(&env, &token), 1);
+    assert_eq!(client.integrity_drift(&pool), Some(v2));
+
+    // Out of the pool (a buy): goes through, no repeat alert.
+    client.transfer(&pool, &alice, &(5 * H));
+    assert_eq!(drift_events(&env, &token), 0);
+
+    // Classification and mass accounting are untouched.
+    assert!(client.is_pool(&pool));
+    assert_eq!(client.total_mass(), mass_before + 5 * H);
+    assert_eq!(client.balance(&pool), 10_005 * H);
+}
+
+#[test]
+fn test_each_new_bytecode_alerts_once_and_rebind_clears_it() {
+    let (env, _admin, client) = setup_env();
+    let token = client.address.clone();
+    let (pool, v1, v2) = deploy_wasm_contract(&env);
+    client.register_pool_address(&pool);
+    let alice = Address::generate(&env);
+    client.mint(&alice, &(1_000 * H));
+    client.mint(&pool, &(10_000 * H));
+    let mass = client.total_mass();
+
+    owner_upgrades(&env, &pool, &v2);
+    client.transfer(&alice, &pool, &H);
+    assert_eq!(drift_events(&env, &token), 1);
+
+    // Admin reviews and re-binds: flag cleared, no double-counted mass.
+    client.register_pool_address(&pool);
+    assert_eq!(client.pool_wasm_hash(&pool), Some(v2));
+    assert_eq!(client.integrity_drift(&pool), None);
+    assert_eq!(client.total_mass(), mass + H);
+    client.transfer(&alice, &pool, &H);
+    assert_eq!(drift_events(&env, &token), 0);
+
+    // A further upgrade is a new drift with a new alert.
+    owner_upgrades(&env, &pool, &v1);
+    client.transfer(&alice, &pool, &H);
+    assert_eq!(drift_events(&env, &token), 1);
+    assert_eq!(client.integrity_drift(&pool), Some(v1));
+
+    // Removing the pool clears the flag too.
+    client.remove_pool_address(&pool);
+    assert_eq!(client.integrity_drift(&pool), None);
+}
+
+#[test]
+fn test_third_party_router_upgrade_does_not_halt_routed_transfers() {
+    let (env, _admin, client) = setup_env();
+    let token = client.address.clone();
+    add_mass(&env, &client);
+    let (router, _v1, v2) = deploy_wasm_contract(&env);
+    client.register_router_address(&router);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint(&alice, &(100 * H));
+
+    owner_upgrades(&env, &router, &v2);
+
+    // The two legs of a routed swap: user -> router -> recipient.
+    client.transfer(&alice, &router, &(10 * H));
+    assert_eq!(drift_events(&env, &token), 1);
+    client.transfer(&router, &bob, &(10 * H));
+    assert_eq!(client.balance(&bob), 10 * H);
+    assert!(client.is_router(&router));
+}
+
+#[test]
+fn test_drifted_contract_cannot_spend_allowances() {
+    let (env, _admin, client) = setup_env();
+    add_mass(&env, &client);
+    let (router, _v1, v2) = deploy_wasm_contract(&env);
+    client.register_router_address(&router);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint(&alice, &(100 * H));
+    let expiry = env.ledger().sequence() + 1_000;
+    client.approve(&alice, &router, &(50 * H), &expiry);
+
+    // Approved bytecode: the allowance works.
+    client.transfer_from(&router, &alice, &bob, &(10 * H));
+
+    // Swapped bytecode: the allowance is refused...
+    owner_upgrades(&env, &router, &v2);
+    assert!(client.try_transfer_from(&router, &alice, &bob, &(10 * H)).is_err());
+    assert!(client.try_burn_from(&router, &alice, &H).is_err());
+
+    // ...while the holder's own transfers carry on.
+    client.transfer(&alice, &bob, &(10 * H));
+    assert_eq!(client.balance(&bob), 20 * H);
+
+    // Re-binding after review restores it.
+    client.register_router_address(&router);
+    client.transfer_from(&router, &alice, &bob, &(10 * H));
+    assert_eq!(client.balance(&bob), 30 * H);
+}
+
+#[test]
+fn test_registered_contract_with_no_wasm_alerts_instead_of_panicking() {
+    let (env, _admin, client) = setup_env();
+    let token = client.address.clone();
+    let pool = Address::generate(&env);
+    client.register_pool_address(&pool);
+    // Bind a real-looking hash to an address that runs no Wasm, as if
+    // the approved contract had been removed from the ledger.
+    let gone = BytesN::from_array(&env, &[7u8; 32]);
+    env.as_contract(&token, || {
+        env.storage()
+            .persistent()
+            .set(&crate::DataKey::ApprovedPools(pool.clone()), &gone)
+    });
+
+    let alice = Address::generate(&env);
+    client.mint(&alice, &(10 * H));
+    client.transfer(&alice, &pool, &H);
+    assert_eq!(drift_events(&env, &token), 1);
+    assert_eq!(
+        client.integrity_drift(&pool),
+        Some(BytesN::from_array(&env, &[0u8; 32]))
+    );
+    assert_eq!(client.balance(&pool), H);
+}
+
+#[test]
+fn test_classic_and_generated_pools_never_drift() {
+    let (env, _admin, client) = setup_env();
+    let token = client.address.clone();
+    let pool = Address::generate(&env);
+    client.register_pool_address(&pool);
+    assert_eq!(
+        client.pool_wasm_hash(&pool),
+        Some(BytesN::from_array(&env, &[0u8; 32]))
+    );
+    let alice = Address::generate(&env);
+    client.mint(&alice, &(10 * H));
+    client.transfer(&alice, &pool, &H);
+    assert_eq!(drift_events(&env, &token), 0);
+    assert_eq!(client.integrity_drift(&pool), None);
+}
+
+// ─────────────────────────────────────────────────────────────
+//  TIMELOCKED UPGRADE + RENOUNCE
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_upgrade_waits_seven_days_and_must_match_the_proposal() {
+    let (env, _admin, client) = setup_env();
+    let new_hash = env.deployer().upload_contract_wasm(POOL_WASM_V1);
+    let other = env.deployer().upload_contract_wasm(POOL_WASM_V2);
+
+    // Nothing proposed: refused.
+    assert!(client.try_upgrade(&new_hash).is_err());
+
+    let t0 = env.ledger().timestamp();
+    client.propose_upgrade(&new_hash);
+    assert_eq!(
+        client.pending_upgrade(),
+        Some(crate::PendingUpgrade {
+            wasm_hash: new_hash.clone(),
+            eta: t0 + crate::UPGRADE_DELAY_SECS,
+        })
+    );
+
+    // One second early: refused.
+    env.ledger().with_mut(|l| l.timestamp = t0 + crate::UPGRADE_DELAY_SECS - 1);
+    assert!(client.try_upgrade(&new_hash).is_err());
+
+    // On time but a different hash: refused.
+    env.ledger().with_mut(|l| l.timestamp = t0 + crate::UPGRADE_DELAY_SECS);
+    assert!(client.try_upgrade(&other).is_err());
+
+    // On time, matching hash: installed.
+    client.upgrade(&new_hash);
+    match client.address.executable() {
+        Some(soroban_sdk::Executable::Wasm(h)) => assert_eq!(h, new_hash),
+        _ => panic!("token should now run the proposed Wasm"),
+    }
+}
+
+#[test]
+fn test_new_proposal_restarts_the_clock_and_cancel_clears_it() {
+    let (env, _admin, client) = setup_env();
+    let a = env.deployer().upload_contract_wasm(POOL_WASM_V1);
+    let b = env.deployer().upload_contract_wasm(POOL_WASM_V2);
+
+    client.propose_upgrade(&a);
+    env.ledger().with_mut(|l| l.timestamp += crate::UPGRADE_DELAY_SECS);
+    client.propose_upgrade(&b);
+    assert!(client.try_upgrade(&a).is_err());
+    assert!(client.try_upgrade(&b).is_err());
+
+    client.cancel_upgrade();
+    assert_eq!(client.pending_upgrade(), None);
+    env.ledger().with_mut(|l| l.timestamp += crate::UPGRADE_DELAY_SECS);
+    assert!(client.try_upgrade(&b).is_err());
+    assert!(client.try_cancel_upgrade().is_err());
+}
+
+#[test]
+fn test_renounce_admin_ends_every_admin_power_for_good() {
+    let (env, admin, client) = setup_env();
+    assert_eq!(client.admin(), Some(admin));
+    add_mass(&env, &client);
+    let pool = Address::generate(&env);
+    client.register_pool_address(&pool);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    client.mint(&alice, &(100 * H));
+    let hash = env.deployer().upload_contract_wasm(POOL_WASM_V1);
+    client.propose_upgrade(&hash);
+
+    client.renounce_admin();
+    assert_eq!(client.admin(), None);
+    assert_eq!(client.pending_upgrade(), None);
+
+    let x = Address::generate(&env);
+    assert!(client.try_mint(&x, &H).is_err());
+    assert!(client.try_register_pool_address(&x).is_err());
+    assert!(client.try_remove_pool_address(&pool).is_err());
+    assert!(client.try_register_router_address(&x).is_err());
+    assert!(client.try_propose_upgrade(&hash).is_err());
+    env.ledger().with_mut(|l| l.timestamp += crate::UPGRADE_DELAY_SECS);
+    assert!(client.try_upgrade(&hash).is_err());
+    assert!(client.try_set_admin(&x).is_err());
+    assert!(client.try_renounce_admin().is_err());
+    assert!(client
+        .try_initialize(
+            &x,
+            &String::from_str(&env, "X"),
+            &String::from_str(&env, "X")
+        )
+        .is_err());
+
+    // Holders and the registry are unaffected.
+    client.transfer(&alice, &bob, &(10 * H));
+    client.transfer(&alice, &pool, &(10 * H));
+    assert_eq!(client.balance(&bob), 10 * H);
+    assert!(client.is_pool(&pool));
 }

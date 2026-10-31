@@ -25,6 +25,21 @@ const TTL_EXTEND_TO: u32 = 518_400; // ~30 days
 /// becomes truly immutable.
 const MAX_SUPPLY: i128 = 100_000_000 * 10_000_000;
 
+/// Delay between `propose_upgrade` and `upgrade` (7 days, in ledger
+/// seconds). Every holder gets a public window to see new bytecode
+/// before it can run. Matches the Sovereign Vault's upgrade delay so
+/// no key in the system is faster than another.
+pub const UPGRADE_DELAY_SECS: u64 = 7 * 24 * 60 * 60;
+
+/// A proposed token upgrade, installable by the admin once
+/// `env.ledger().timestamp() >= eta`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingUpgrade {
+    pub wasm_hash: BytesN<32>,
+    pub eta: u64,
+}
+
 #[contracttype]
 #[derive(Clone, Debug)]
 pub enum DataKey {
@@ -51,12 +66,13 @@ pub enum DataKey {
     //  the hash — not just a `bool` flag — binds the approval to a
     //  specific bytecode. If the pool / router's owner calls Soroban's
     //  `update_current_contract_wasm`, the on-chain executable hash
-    //  changes and this token's integrity guard panics on the next
-    //  state-changing interaction, forcing the admin to explicitly
-    //  re-register the new bytecode. Without this bind, a trusted
-    //  router could be silently swapped for malicious code while
-    //  preserving infrastructure immunity and mass accounting — a
-    //  complete bypass of the Gravity model.
+    //  changes and the next state-changing interaction emits an
+    //  `IntegrityDriftEvent` (once per new hash) and records it under
+    //  `Drift(address)`. Transfers keep working: a third party's
+    //  upgrade must never halt HITZ. The admin reviews the new
+    //  bytecode and either re-registers (re-binds) or removes the
+    //  address. The one hard refusal: a drifted contract cannot spend
+    //  an allowance, since holders approved the old bytecode.
     //
     //  For non-Wasm addresses (classic Stellar accounts, e.g. the
     //  admin funding address treated as a pool for bootstrap), the
@@ -90,6 +106,20 @@ pub enum DataKey {
     //  and avoids a per-read TTL check.
     PoolList,
     RouterList,
+    // ──────────────────────────────────────────────────────────
+    //  INTEGRITY DRIFT + ADMIN LIFECYCLE
+    // ──────────────────────────────────────────────────────────
+    /// Live WASM hash last seen for a registered pool / router whose
+    /// bytecode no longer matches its approval (zero hash if it no
+    /// longer runs Wasm). Present = drifted and already alerted for
+    /// this hash. Cleared by re-registration or removal.
+    Drift(Address),
+    /// The timelocked upgrade proposal, if any (instance storage).
+    PendingUpgrade,
+    /// Set once by `renounce_admin`; permanently disables every
+    /// admin-gated entrypoint. `Admin` itself is kept so `initialize`
+    /// can never run again.
+    Renounced,
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -182,6 +212,45 @@ pub struct AdminChangedEvent {
     new: Address,
 }
 
+/// Emitted once per drift: a registered pool / router is running
+/// bytecode other than the hash approved at registration (`live` is the
+/// zero hash if it no longer runs Wasm at all). The token keeps working
+/// and keeps the address's classification; monitors page the admin,
+/// who re-registers (re-binds) or removes it.
+#[contractevent]
+pub struct IntegrityDriftEvent {
+    #[topic]
+    address: Address,
+    approved: BytesN<32>,
+    live: BytesN<32>,
+}
+
+/// A token upgrade was proposed; installable from `eta` (ledger seconds).
+#[contractevent]
+pub struct UpgradeProposedEvent {
+    wasm_hash: BytesN<32>,
+    eta: u64,
+}
+
+/// The pending upgrade proposal was withdrawn.
+#[contractevent]
+pub struct UpgradeCancelledEvent {
+    wasm_hash: BytesN<32>,
+}
+
+/// The proposed WASM was installed.
+#[contractevent]
+pub struct UpgradedEvent {
+    wasm_hash: BytesN<32>,
+}
+
+/// The admin role was given up for good.
+#[contractevent]
+pub struct AdminRenouncedEvent {
+    #[topic]
+    previous: Address,
+}
+
 #[contract]
 pub struct GravityToken;
 
@@ -238,9 +307,9 @@ impl GravityToken {
     ///      This closes the historical "blank check" where mint
     ///      had no upper bound.
     ///   2. Integrity — if the recipient is a registered pool /
-    ///      router, its on-chain WASM must still match what was
-    ///      approved; a bytecode swap aborts the mint before any
-    ///      balance write.
+    ///      router whose on-chain WASM no longer matches what was
+    ///      approved, an `IntegrityDriftEvent` is emitted (once per
+    ///      new hash) so the admin sees it before minting again.
     ///
     /// "Roach Motel" semantics: within those guards, mint never
     /// fails due to vault logic. If the recipient breaches L they
@@ -263,11 +332,8 @@ impl GravityToken {
             panic!("Mint would exceed max supply of 100,000,000 HITZ");
         }
 
-        // Security guard — if the recipient is a registered pool /
-        // router, its on-chain WASM must still match what admin
-        // approved. Halts before the balance write so a swapped pool
-        // can't trick admin into crediting its TotalMass under the new
-        // bytecode.
+        // Classify the recipient; a registered pool / router running
+        // unapproved bytecode raises an `IntegrityDriftEvent` here.
         let to_is_pool = Self::checked_is_pool(&env, &to);
         let to_is_router = Self::checked_is_router(&env, &to);
 
@@ -356,6 +422,9 @@ impl GravityToken {
             Self::set_vaulted(&env, &address, false);
         }
 
+        // Re-binding is the admin's sign-off on the live bytecode.
+        Self::clear_drift(&env, &address);
+
         PoolRegisteredEvent {
             address,
             wasm_hash,
@@ -386,6 +455,7 @@ impl GravityToken {
 
             env.storage().persistent().remove(&key);
             Self::pool_list_remove(&env, &address);
+            Self::clear_drift(&env, &address);
         }
 
         // Emit the event with the hash that WAS registered (or zero
@@ -429,6 +499,8 @@ impl GravityToken {
             Self::set_vaulted(&env, &address, false);
         }
 
+        Self::clear_drift(&env, &address);
+
         RouterRegisteredEvent {
             address,
             wasm_hash,
@@ -448,6 +520,7 @@ impl GravityToken {
         if prior.is_some() {
             env.storage().persistent().remove(&key);
             Self::router_list_remove(&env, &address);
+            Self::clear_drift(&env, &address);
         }
 
         let wasm_hash = prior.unwrap_or_else(|| BytesN::from_array(&env, &[0u8; 32]));
@@ -462,18 +535,103 @@ impl GravityToken {
         Self::extend_instance_ttl(&env);
     }
 
-    /// Upgrade the contract WASM in-place. Admin-only.
-    ///
-    /// TEMPORARY — to be removed before mainnet immutable deployment.
-    pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>) {
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
-        admin.require_auth();
+    // ─────────────────────────────────────────────────────────────
+    //  UPGRADES (7-DAY TIMELOCK) + RENOUNCE
+    // ─────────────────────────────────────────────────────────────
+    //
+    //  An upgrade can rewrite any balance, so it is the most powerful
+    //  action in the system. It is public for UPGRADE_DELAY_SECS before
+    //  it can run. `renounce_admin` ends every admin power for good.
+
+    /// Propose new token bytecode. Admin-only. `upgrade` can install it
+    /// once 7 days have passed. A new proposal replaces any pending one
+    /// and restarts the clock.
+    pub fn propose_upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+        Self::require_admin(&env);
+        let eta = env
+            .ledger()
+            .timestamp()
+            .checked_add(UPGRADE_DELAY_SECS)
+            .expect("eta overflow");
+        let pending = PendingUpgrade {
+            wasm_hash: new_wasm_hash.clone(),
+            eta,
+        };
+        env.storage().instance().set(&DataKey::PendingUpgrade, &pending);
+
+        UpgradeProposedEvent {
+            wasm_hash: new_wasm_hash,
+            eta,
+        }
+        .publish(&env);
+
+        Self::extend_instance_ttl(&env);
+    }
+
+    /// Withdraw the pending upgrade proposal. Admin-only.
+    pub fn cancel_upgrade(env: Env) {
+        Self::require_admin(&env);
+        let pending: PendingUpgrade = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingUpgrade)
+            .unwrap_or_else(|| panic!("No pending upgrade"));
+        env.storage().instance().remove(&DataKey::PendingUpgrade);
+
+        UpgradeCancelledEvent {
+            wasm_hash: pending.wasm_hash,
+        }
+        .publish(&env);
+
+        Self::extend_instance_ttl(&env);
+    }
+
+    /// Install the proposed bytecode. Admin-only, and only once the
+    /// timelock has elapsed; `new_wasm_hash` must match the proposal.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+        Self::require_admin(&env);
+        let pending: PendingUpgrade = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingUpgrade)
+            .unwrap_or_else(|| panic!("No pending upgrade"));
+        if pending.wasm_hash != new_wasm_hash {
+            panic!("Upgrade hash does not match the proposal");
+        }
+        if env.ledger().timestamp() < pending.eta {
+            panic!("Upgrade timelock has not elapsed");
+        }
+        env.storage().instance().remove(&DataKey::PendingUpgrade);
+
+        UpgradedEvent {
+            wasm_hash: new_wasm_hash.clone(),
+        }
+        .publish(&env);
+
+        Self::extend_instance_ttl(&env);
         env.deployer().update_current_contract_wasm(new_wasm_hash);
+    }
+
+    /// Give up the admin role permanently. Admin-only, irreversible.
+    /// Afterwards nothing can mint, upgrade, change the pool / router
+    /// registry or set a new admin. Any pending upgrade is discarded.
+    pub fn renounce_admin(env: Env) {
+        Self::require_admin(&env);
+        let previous: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        env.storage().instance().set(&DataKey::Renounced, &true);
+        env.storage().instance().remove(&DataKey::PendingUpgrade);
+
+        AdminRenouncedEvent { previous }.publish(&env);
+
+        Self::extend_instance_ttl(&env);
     }
 
     /// Transfer admin role to a new address.
     /// Requires auth from BOTH current admin and new admin.
     pub fn set_admin(env: Env, new_admin: Address) {
+        if Self::is_renounced(&env) {
+            panic!("Admin renounced");
+        }
         // Capture previous admin BEFORE the require_admin call mutates
         // nothing — order is just for clarity. Both old and new must
         // co-sign, so a stolen old key alone can't rotate to an
@@ -534,14 +692,15 @@ impl GravityToken {
     //  ROUTERS: Pass-through only. They never affect TotalMass.
     //    Vaulted users CANNOT send to routers — only to pools.
     //
-    //  INTEGRITY: Every classification of an address as pool / router
-    //    is enforced against the CURRENT on-chain WASM hash. A
-    //    pool/router whose bytecode has been upgraded since approval
-    //    fails integrity and the transaction panics — there's no
-    //    silent downgrade to "regular account" because that would
-    //    hide a security event from operators. The fix-forward path
-    //    is `register_pool_address` / `register_router_address` with
-    //    the new hash after a deliberate review.
+    //  INTEGRITY (FAIL-SOFT): Every classification of an address as
+    //    pool / router is checked against the CURRENT on-chain WASM
+    //    hash. A pool / router whose bytecode changed since approval
+    //    keeps its classification (so TotalMass stays consistent) and
+    //    the token emits an `IntegrityDriftEvent` once per new hash.
+    //    The transfer goes through: a third party's upgrade can never
+    //    halt HITZ. The fix-forward path is `register_pool_address` /
+    //    `register_router_address` (re-bind) or removal, after review.
+    //    Allowances are the exception: a drifted spender is refused.
     //
 
     pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
@@ -554,10 +713,9 @@ impl GravityToken {
             panic!("Cannot transfer to self");
         }
 
-        // Classify + verify integrity in one pass. Each `checked_is_*`
-        // call panics if the address is registered but the deployed
-        // WASM hash no longer matches what was approved — closing the
-        // upgrade-substitution attack vector before ANY state moves.
+        // Classify + check integrity in one pass. Each `checked_is_*`
+        // call alerts (never panics) if the address is registered but
+        // its deployed WASM no longer matches what was approved.
         let to_is_pool = Self::checked_is_pool(&env, &to);
         let from_is_pool = Self::checked_is_pool(&env, &from);
         let from_is_router = Self::checked_is_router(&env, &from);
@@ -643,10 +801,11 @@ impl GravityToken {
             panic!("Cannot transfer to self");
         }
 
-        // Spender gets the same integrity treatment — a user who
-        // granted an allowance to a registered pool / router expects
-        // that allowance to cover the approved bytecode, NOT whatever
-        // replacement an attacker swapped in.
+        // Allowances are the one hard refusal: a user who granted an
+        // allowance to a registered pool / router approved that
+        // bytecode, NOT whatever replacement was swapped in. DEX swaps
+        // move funds with `transfer` under the user's auth, so this
+        // never blocks trading.
         Self::enforce_integrity_if_registered(&env, &spender);
 
         Self::spend_allowance(&env, &from, &spender, amount);
@@ -986,13 +1145,43 @@ impl GravityToken {
         Self::read_router_list(&env)
     }
 
+    /// Current admin, or `None` once the role has been renounced.
+    pub fn admin(env: Env) -> Option<Address> {
+        if Self::is_renounced(&env) {
+            return None;
+        }
+        env.storage().instance().get(&DataKey::Admin)
+    }
+
+    /// The pending timelocked upgrade, if any.
+    pub fn pending_upgrade(env: Env) -> Option<PendingUpgrade> {
+        env.storage().instance().get(&DataKey::PendingUpgrade)
+    }
+
+    /// If `address` is a registered pool / router that was seen running
+    /// unapproved bytecode, the live hash observed (zero hash = no
+    /// longer Wasm). `None` when no drift is flagged.
+    pub fn integrity_drift(env: Env, address: Address) -> Option<BytesN<32>> {
+        env.storage().persistent().get(&DataKey::Drift(address))
+    }
+
     // ─────────────────────────────────────────────────────────────
     //  INTERNAL HELPERS
     // ─────────────────────────────────────────────────────────────
 
     fn require_admin(env: &Env) {
+        if Self::is_renounced(env) {
+            panic!("Admin renounced");
+        }
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         admin.require_auth();
+    }
+
+    fn is_renounced(env: &Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Renounced)
+            .unwrap_or(false)
     }
 
     fn read_balance(env: &Env, id: &Address) -> i128 {
@@ -1215,16 +1404,14 @@ impl GravityToken {
         }
     }
 
-    /// Returns `true` iff `address` is registered as a pool AND its
-    /// current on-chain WASM matches the registered hash. Panics if
-    /// registration is present but the bytecode has changed — the
-    /// admin must explicitly re-approve after any deliberate upgrade.
-    /// Returns `false` for unregistered addresses (no panic).
+    /// Returns `true` iff `address` is registered as a pool. If its
+    /// current on-chain WASM no longer matches the registered hash,
+    /// an `IntegrityDriftEvent` is emitted (once per new hash) and the
+    /// classification is kept, so TotalMass accounting stays exact and
+    /// the transfer proceeds. Never panics.
     ///
-    /// Use this in every state-changing path. Pair with
-    /// `is_pool_registered` only when a panic is unacceptable (silent
-    /// trap) — in that case the upstream caller is responsible for
-    /// having already run the checked variant.
+    /// Use this in every state-changing path. `is_pool_registered` is
+    /// the pure read for passive paths and views.
     fn checked_is_pool(env: &Env, address: &Address) -> bool {
         match env
             .storage()
@@ -1232,7 +1419,7 @@ impl GravityToken {
             .get::<_, BytesN<32>>(&DataKey::ApprovedPools(address.clone()))
         {
             Some(expected) => {
-                Self::assert_wasm_matches(address, &expected);
+                Self::check_integrity(env, address, &expected);
                 true
             }
             None => false,
@@ -1246,62 +1433,81 @@ impl GravityToken {
             .get::<_, BytesN<32>>(&DataKey::ApprovedRouters(address.clone()))
         {
             Some(expected) => {
-                Self::assert_wasm_matches(address, &expected);
+                Self::check_integrity(env, address, &expected);
                 true
             }
             None => false,
         }
     }
 
-    /// Run the integrity check on `address` for the side effect only —
-    /// if the address is registered as a pool or router AND its current
-    /// on-chain bytecode no longer matches the approved hash, panic.
-    /// No-op when the address is unregistered.
-    ///
-    /// Used in delegated paths (`transfer_from`, `burn_from`) where the
-    /// spender's classification doesn't change the accounting but we
-    /// still want to refuse to honour an allowance against a swapped-out
-    /// pool/router. The intent is encoded in the function name so a
-    /// future cleanup pass cannot mistake the call for dead code, the
-    /// way `let _spender_is_pool = …` discards previously could.
+    /// Allowance paths only (`transfer_from`, `burn_from`): refuse to
+    /// let a registered pool / router spend an allowance while it runs
+    /// bytecode other than what was approved. No-op for unregistered
+    /// spenders. Swaps never depend on this: Soroban DEXes move funds
+    /// with `transfer` under the user's own auth.
     fn enforce_integrity_if_registered(env: &Env, address: &Address) {
-        let _ = Self::checked_is_pool(env, address);
-        let _ = Self::checked_is_router(env, address);
+        if let Some(expected) = env
+            .storage()
+            .persistent()
+            .get::<_, BytesN<32>>(&DataKey::ApprovedPools(address.clone()))
+        {
+            if Self::check_integrity(env, address, &expected) {
+                panic!("approved contract wasm hash mismatch: allowance refused");
+            }
+        }
+        if let Some(expected) = env
+            .storage()
+            .persistent()
+            .get::<_, BytesN<32>>(&DataKey::ApprovedRouters(address.clone()))
+        {
+            if Self::check_integrity(env, address, &expected) {
+                panic!("approved contract wasm hash mismatch: allowance refused");
+            }
+        }
     }
 
-    /// Core integrity primitive — fetch the address's CURRENT on-chain
-    /// executable hash, compare to `expected`, panic on any mismatch.
+    /// Core integrity primitive (fail-soft). Compares the address's
+    /// CURRENT on-chain executable to `expected` and returns `true` if
+    /// it drifted. On the first sighting of a given live hash it
+    /// records `Drift(address)` and emits `IntegrityDriftEvent`.
+    /// Never panics: an upgrade by a third party must not halt HITZ.
     ///
     /// The zero hash is a sentinel meaning "classic account, no
-    /// integrity binding" — set when the registered address has no
-    /// WASM to bind against. In that case we skip the check entirely
-    /// (there's nothing to compare and panicking would lock classic
-    /// pools out of the system).
-    ///
-    /// Kept deliberately simple: one compare, one panic site.
-    fn assert_wasm_matches(address: &Address, expected: &BytesN<32>) {
-        // Zero-hash sentinel = non-Wasm address, integrity check
-        // doesn't apply.
+    /// integrity binding" (nothing to compare), so it never drifts.
+    /// A registered contract that no longer runs Wasm (or no longer
+    /// exists) reports a live hash of zero.
+    fn check_integrity(env: &Env, address: &Address, expected: &BytesN<32>) -> bool {
         let zero = [0u8; 32];
         if expected.to_array() == zero {
-            return;
+            return false;
         }
-        match address.executable() {
-            Some(Executable::Wasm(actual)) => {
-                if actual != *expected {
-                    panic!("approved contract wasm hash mismatch");
-                }
-            }
-            Some(Executable::StellarAsset) => {
-                panic!("approved contract is a Stellar Asset, not Wasm");
-            }
-            Some(Executable::Account) => {
-                panic!("approved contract address is an account, not Wasm");
-            }
-            None => {
-                panic!("approved contract no longer exists on chain");
-            }
+        let live = match address.executable() {
+            Some(Executable::Wasm(actual)) => actual,
+            _ => BytesN::from_array(env, &zero),
+        };
+        if live == *expected {
+            return false;
         }
+
+        let key = DataKey::Drift(address.clone());
+        let seen: Option<BytesN<32>> = env.storage().persistent().get(&key);
+        if seen.as_ref() != Some(&live) {
+            env.storage().persistent().set(&key, &live);
+            Self::extend_persistent_ttl(env, &key);
+            IntegrityDriftEvent {
+                address: address.clone(),
+                approved: expected.clone(),
+                live,
+            }
+            .publish(env);
+        }
+        true
+    }
+
+    fn clear_drift(env: &Env, address: &Address) {
+        env.storage()
+            .persistent()
+            .remove(&DataKey::Drift(address.clone()));
     }
 
     /// Infallible safety limit: L = floor(sqrt(TotalMass × 10^decimals)).

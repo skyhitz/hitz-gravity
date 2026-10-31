@@ -87,14 +87,21 @@ git push origin v1.x.y
 gh release download v1.x.y_contracts_gravity_token_gravity-token_pkg0.0.0_cli25.1.0 \
   --pattern '*.wasm' --dir build/
 
-# 3. Upload + upgrade (admin-gated)
+# 3. Upload, propose, wait 7 days, upgrade (admin-gated)
 stellar contract upload --wasm build/gravity-token_v0.0.0.wasm \
   --source <admin> --network mainnet
 # → returns NEW_HASH
 
 stellar contract invoke --id <CONTRACT_ID> --source <admin> --network mainnet \
+  -- propose_upgrade --new_wasm_hash <NEW_HASH>
+# Public for 7 days (`pending_upgrade` shows it). Then:
+stellar contract invoke --id <CONTRACT_ID> --source <admin> --network mainnet \
   -- upgrade --new_wasm_hash <NEW_HASH>
 ```
+
+Upgrades are timelocked from the release that introduced the timelock on.
+Installing that release itself still uses the old one-step `upgrade` call.
+`renounce_admin` ends minting, upgrades and registry changes for good.
 
 After upgrade, Stellar Expert's `Source code` field on the contract
 page automatically links back to the validated commit. See the
