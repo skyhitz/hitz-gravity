@@ -26,7 +26,7 @@ jobs:
     uses: stellar-expert/soroban-build-workflow/.github/workflows/release.yml@v25.1.0
     with:
       release_name: ${{ github.event.inputs.release_version || github.ref_name }}
-      release_description: "HITZ Sovereign Vault — Soroban contract release"
+      release_description: "HITZ Sovereign Vault, Soroban contract release"
       relative_path: contracts/sovereign-vault
       package: sovereign-vault
     secrets:
