@@ -1442,6 +1442,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sovereign-vault"
+version = "0.0.0"
+dependencies = [
+ "gravity-token",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
