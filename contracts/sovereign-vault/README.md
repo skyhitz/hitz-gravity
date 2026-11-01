@@ -146,4 +146,5 @@ cargo build --target wasm32v1-none --release -p gravity-token
 cargo test -p sovereign-vault --features migration-rehearsal --test mainnet_migration
 ```
 
+Integrating a bot, wallet or app: [`INTEGRATION.md`](INTEGRATION.md).
 Security review and production checklist: [`AUDIT.md`](../../AUDIT.md).
