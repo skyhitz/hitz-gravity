@@ -615,8 +615,17 @@ impl GravityToken {
     /// Give up the admin role permanently. Admin-only, irreversible.
     /// Afterwards nothing can mint, upgrade, change the pool / router
     /// registry or set a new admin. Any pending upgrade is discarded.
+    ///
+    /// Renouncing freezes the registry for good, so it must be final
+    /// first. Refused while any registered pool / router is a classic
+    /// account (zero-hash binding: it would stay exempt from vaulting
+    /// forever, e.g. the bootstrap admin wallet) or runs bytecode other
+    /// than what was approved (nobody could review, re-bind or remove it
+    /// afterwards). Remove or re-bind those entries, then renounce.
     pub fn renounce_admin(env: Env) {
         Self::require_admin(&env);
+        Self::assert_registry_final(&env, &Self::read_pool_list(&env), true);
+        Self::assert_registry_final(&env, &Self::read_router_list(&env), false);
         let previous: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         env.storage().instance().set(&DataKey::Renounced, &true);
         env.storage().instance().remove(&DataKey::PendingUpgrade);
@@ -1413,12 +1422,10 @@ impl GravityToken {
     /// Use this in every state-changing path. `is_pool_registered` is
     /// the pure read for passive paths and views.
     fn checked_is_pool(env: &Env, address: &Address) -> bool {
-        match env
-            .storage()
-            .persistent()
-            .get::<_, BytesN<32>>(&DataKey::ApprovedPools(address.clone()))
-        {
+        let key = DataKey::ApprovedPools(address.clone());
+        match env.storage().persistent().get::<_, BytesN<32>>(&key) {
             Some(expected) => {
+                Self::extend_registration_ttl(env, &key);
                 Self::check_integrity(env, address, &expected);
                 true
             }
@@ -1427,16 +1434,44 @@ impl GravityToken {
     }
 
     fn checked_is_router(env: &Env, address: &Address) -> bool {
-        match env
-            .storage()
-            .persistent()
-            .get::<_, BytesN<32>>(&DataKey::ApprovedRouters(address.clone()))
-        {
+        let key = DataKey::ApprovedRouters(address.clone());
+        match env.storage().persistent().get::<_, BytesN<32>>(&key) {
             Some(expected) => {
+                Self::extend_registration_ttl(env, &key);
                 Self::check_integrity(env, address, &expected);
                 true
             }
             None => false,
+        }
+    }
+
+    /// Registrations are read on every transfer that touches a pool or
+    /// router, but were only bumped when registered: after the minimum
+    /// persistent TTL (~120 days) they archived and the next trade had to
+    /// pay to restore them. Bump them on use, like balances.
+    fn extend_registration_ttl(env: &Env, key: &DataKey) {
+        env.storage()
+            .persistent()
+            .extend_ttl(key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+
+    /// Panics unless every entry in `list` is a Wasm contract still
+    /// running its approved bytecode. See `renounce_admin`.
+    fn assert_registry_final(env: &Env, list: &Vec<Address>, pools: bool) {
+        let zero = [0u8; 32];
+        for address in list.iter() {
+            let key = if pools {
+                DataKey::ApprovedPools(address.clone())
+            } else {
+                DataKey::ApprovedRouters(address.clone())
+            };
+            let approved: BytesN<32> = env.storage().persistent().get(&key).unwrap();
+            if approved.to_array() == zero {
+                panic!("Remove classic-account registrations before renouncing");
+            }
+            if Self::live_wasm_hash(env, &address) != approved {
+                panic!("Re-bind or remove drifted registrations before renouncing");
+            }
         }
     }
 
@@ -1477,14 +1512,10 @@ impl GravityToken {
     /// A registered contract that no longer runs Wasm (or no longer
     /// exists) reports a live hash of zero.
     fn check_integrity(env: &Env, address: &Address, expected: &BytesN<32>) -> bool {
-        let zero = [0u8; 32];
-        if expected.to_array() == zero {
+        if expected.to_array() == [0u8; 32] {
             return false;
         }
-        let live = match address.executable() {
-            Some(Executable::Wasm(actual)) => actual,
-            _ => BytesN::from_array(env, &zero),
-        };
+        let live = Self::live_wasm_hash(env, address);
         if live == *expected {
             return false;
         }
@@ -1502,6 +1533,15 @@ impl GravityToken {
             .publish(env);
         }
         true
+    }
+
+    /// The address's current Wasm hash, or the zero hash if it runs no
+    /// Wasm (classic account, Stellar Asset, or no longer on chain).
+    fn live_wasm_hash(env: &Env, address: &Address) -> BytesN<32> {
+        match address.executable() {
+            Some(Executable::Wasm(actual)) => actual,
+            _ => BytesN::from_array(env, &[0u8; 32]),
+        }
     }
 
     fn clear_drift(env: &Env, address: &Address) {

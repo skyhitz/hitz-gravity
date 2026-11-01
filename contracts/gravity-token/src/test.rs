@@ -1697,9 +1697,11 @@ fn test_new_proposal_restarts_the_clock_and_cancel_clears_it() {
 fn test_renounce_admin_ends_every_admin_power_for_good() {
     let (env, admin, client) = setup_env();
     assert_eq!(client.admin(), Some(admin));
-    add_mass(&env, &client);
-    let pool = Address::generate(&env);
+    // Renouncing needs a final registry: only Wasm contracts on their
+    // approved bytecode.
+    let (pool, _v1, _v2) = deploy_wasm_contract(&env);
     client.register_pool_address(&pool);
+    client.mint(&pool, &(1_000_000 * H));
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
     client.mint(&alice, &(100 * H));
@@ -1733,4 +1735,69 @@ fn test_renounce_admin_ends_every_admin_power_for_good() {
     client.transfer(&alice, &pool, &(10 * H));
     assert_eq!(client.balance(&bob), 10 * H);
     assert!(client.is_pool(&pool));
+}
+
+#[test]
+fn test_renounce_refuses_classic_account_registrations() {
+    // The bootstrap admin wallet registered as a "pool" is exempt from
+    // vaulting. Renouncing with it registered would make that exemption
+    // permanent, so it has to be removed first.
+    let (env, admin, client) = setup_env();
+    let (vault, _v1, _v2) = deploy_wasm_contract(&env);
+    client.register_pool_address(&vault);
+    client.register_pool_address(&admin);
+    assert!(client.try_renounce_admin().is_err());
+
+    client.remove_pool_address(&admin);
+    let sponsor = Address::generate(&env);
+    client.register_router_address(&sponsor);
+    assert!(client.try_renounce_admin().is_err());
+
+    client.remove_router_address(&sponsor);
+    client.renounce_admin();
+    assert_eq!(client.admin(), None);
+}
+
+#[test]
+fn test_renounce_refuses_drifted_registrations() {
+    // A registration whose bytecode changed can never be reviewed after
+    // renouncing, so it must be re-bound or removed first. The check reads
+    // the live bytecode, so it catches drift no transfer has seen yet.
+    let (env, _admin, client) = setup_env();
+    let (pool, _v1, v2) = deploy_wasm_contract(&env);
+    client.register_pool_address(&pool);
+    owner_upgrades(&env, &pool, &v2);
+    assert_eq!(client.integrity_drift(&pool), None);
+    assert!(client.try_renounce_admin().is_err());
+
+    client.register_pool_address(&pool);
+    client.renounce_admin();
+    assert_eq!(client.admin(), None);
+}
+
+#[test]
+fn test_registrations_are_kept_alive_by_use() {
+    // Registry entries used to be bumped only when registered, so they
+    // archived after the minimum TTL even while the pool traded daily.
+    let (env, _admin, client) = setup_env();
+    let pool = Address::generate(&env);
+    client.register_pool_address(&pool);
+    let alice = Address::generate(&env);
+    client.mint(&alice, &(10 * H));
+
+    let key = crate::DataKey::ApprovedPools(pool.clone());
+    use soroban_sdk::testutils::storage::Persistent as _;
+    let ttl = || env.as_contract(&client.address, || env.storage().persistent().get_ttl(&key));
+    let start = ttl();
+    // Walk the ledger to one day before the entry would archive.
+    env.ledger()
+        .with_mut(|l| l.sequence_number += start - 1_000);
+    assert_eq!(ttl(), 1_000);
+
+    client.transfer(&alice, &pool, &H);
+    assert!(
+        ttl() > 1_000 + 17_280,
+        "registration was not bumped: {}",
+        ttl()
+    );
 }
