@@ -2,6 +2,9 @@
 
   data/xlm_1m.jsonl          Binance XLMUSDC 1-minute candles:
                              [open time, open, high, low, close, quote volume]
+  data/eur_1m.jsonl          Binance EURUSDC 1-minute candles, same layout
+                             (the market for a euro stablecoin such as EURC,
+                             for the three-asset run)
   data/pool-<prefix>.jsonl   every event of the two Aquarius HITZ pools,
                              with the event body decoded
 
@@ -30,6 +33,7 @@ POOLS = {
 POOL_CREATED = datetime.datetime(2026, 4, 25, tzinfo=datetime.UTC)
 STELLAR_EXPERT = "https://api.stellar.expert/explorer/public"
 BINANCE = "https://data-api.binance.vision/api/v3/klines"
+CANDLES = {"xlm_1m.jsonl": "XLMUSDC", "eur_1m.jsonl": "EURUSDC"}
 
 
 def get_json(url: str):
@@ -83,14 +87,14 @@ def decode_scval(b: bytes, i: int = 0):
     raise ValueError(f"unsupported ScVal type {t}")
 
 
-def fetch_candles(until: datetime.datetime):
-    path = os.path.join(DATA, "xlm_1m.jsonl")
+def fetch_candles(symbol: str, filename: str, until: datetime.datetime):
+    path = os.path.join(DATA, filename)
     t = int(POOL_CREATED.timestamp() * 1000)
     end = int(until.timestamp() * 1000)
     n = 0
     with open(path, "w") as out:
         while t < end:
-            rows = get_json(f"{BINANCE}?symbol=XLMUSDC&interval=1m&limit=1000&startTime={t}")
+            rows = get_json(f"{BINANCE}?symbol={symbol}&interval=1m&limit=1000&startTime={t}")
             if not rows:
                 break
             for r in rows:
@@ -136,4 +140,6 @@ if __name__ == "__main__":
     args = ap.parse_args()
     os.makedirs(DATA, exist_ok=True)
     fetch_pool_events()
-    fetch_candles(datetime.datetime.strptime(args.until, "%Y-%m-%d").replace(tzinfo=datetime.UTC))
+    until = datetime.datetime.strptime(args.until, "%Y-%m-%d").replace(tzinfo=datetime.UTC)
+    for filename, symbol in CANDLES.items():
+        fetch_candles(symbol, filename, until)

@@ -1,16 +1,19 @@
-"""Replay the real XLM/USDC minute path through the vault's exact fee math.
+"""Replay real minute prices through the vault's exact fee math.
 
 An arbitrageur with unlimited flash-loan capital checks the vault every
-step. If the vault's XLM price is off the market by more than its costs,
-it searches for the most profitable trade size using the exact contract
-quote, executes it, and repeats in the same step while it stays
-profitable (which is how a bot would split a big trade).
+step. For every ordered pair of listed assets whose vault exchange rate is
+off the market by more than its costs, best edge first, it searches for the
+most profitable trade size using the exact contract quote, executes it, and
+repeats in the same step while anything stays profitable (which is how a
+bot would split a big trade).
 
-Costs: `hedge` is the fraction lost settling the other side on an external
-venue (fee + spread); `gas` is USD per swap call; `min_profit` is the
-smallest USD profit a bot bothers with.
+Costs: `hedge` is the fraction lost settling each non-USDC leg on an
+external venue (fee + spread); `gas` is USD per swap call; `min_profit` is
+the smallest USD profit a bot bothers with.
 """
 import bisect
+import datetime
+import itertools
 import json
 import math
 import os
@@ -18,10 +21,10 @@ import sys
 from dataclasses import dataclass, field
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from vaultmath import (ONE, Policy, TradeTooSmall, anchor_now, fee_for_price,  # noqa: E402
-                       run_route, xlm_price)
+from vaultmath import ONE, VaultError, pool_state, rate, swap  # noqa: E402
 
 U = 10_000_000
+NUMERAIRE = "USDC"
 
 
 @dataclass
@@ -30,6 +33,9 @@ class Arb:
     gas: float = 0.002
     min_profit: float = 0.005
     max_calls: int = 8  # swap calls per step (splitting)
+
+    def cost(self, asset):
+        return 0.0 if asset == NUMERAIRE else self.hedge
 
 
 @dataclass
@@ -44,140 +50,181 @@ class Result:
     v_start: float = 0.0
     v_end: float = 0.0
     v_hold_end: float = 0.0
-    track_err_sum: float = 0.0
-    track_err_n: int = 0
+    steps: int = 0
     floor_steps: int = 0
+    lag: dict = field(default_factory=dict)        # asset -> sum of |vault / market - 1|
+    pair_fee: dict = field(default_factory=dict)   # (a, b) -> sum of a small a->b swap's fee
+    pair_swaps: dict = field(default_factory=dict)  # (a, b) -> arb swaps
     monthly: dict = field(default_factory=dict)
+    final: tuple = ()
+
+    def avg_lag(self, asset):
+        return self.lag[asset] / self.steps
+
+    def avg_pair_fee(self, a, b):
+        return self.pair_fee[(a, b)] / self.steps
 
 
 def load_candles(path):
-    rows = [json.loads(l) for l in open(path)]
-    return rows
+    return [json.loads(line) for line in open(path)]
 
 
-def vault_value(r, m):
-    return r[1] / U * m + r[3] / U
+class Market:
+    """Minute candles per asset, [open time, open, high, low, close, ...]; USDC is 1."""
+
+    def __init__(self, series):
+        self.series = series
+        self.times = {a: [c[0] for c in cs] for a, cs in series.items()}
+
+    def candle(self, asset, ts):
+        i = bisect.bisect_right(self.times[asset], ts) - 1
+        return self.series[asset][max(i, 0)]
+
+    def path(self, ts, assets, how):
+        """Prices inside the minute starting at ts: [(time, {asset: price})]."""
+        cs = {a: self.candle(a, ts) for a in assets if a != NUMERAIRE}
+        if how == "close":
+            return [(ts + 59, {NUMERAIRE: 1.0, **{a: c[4] for a, c in cs.items()}})]
+        steps = []
+        for k, dt in enumerate((0, 20, 40, 59)):
+            m = {NUMERAIRE: 1.0}
+            for a, (_, o, h, lo, cl, *_) in cs.items():
+                m[a] = (o, lo if cl >= o else h, h if cl >= o else lo, cl)[k]
+            steps.append((ts + dt, m))
+        return steps
 
 
-def profit_of(pol, r, anchor, route, amount, m, arb):
-    """USD profit of one swap at market price m (after hedge + gas)."""
+def vault_value(pools, m):
+    return sum(p.reserve / U * m[p.asset] for p in pools)
+
+
+def profit_of(pol, pools, a, b, amount, m, arb, now):
+    """USD profit of one a->b swap at market prices m (after hedge and gas)."""
     try:
-        r2, out, fees = run_route(pol, r, anchor, route, amount)
-    except (TradeTooSmall, OverflowError, ZeroDivisionError):
+        pools2, out, hops = swap(pol, pools, a, b, amount, now)
+    except (VaultError, ZeroDivisionError):
         return -1e9, None
-    if route == "XLM->USDC":
-        p = out / U - amount / U * m * (1 + arb.hedge) - arb.gas
-    else:
-        p = out / U * m * (1 - arb.hedge) - amount / U - arb.gas
-    return p, (r2, out, fees)
+    p = out / U * m[b] * (1 - arb.cost(b)) - amount / U * m[a] * (1 + arb.cost(a)) - arb.gas
+    return p, (pools2, out, hops)
 
 
-def best_trade(pol, r, anchor, route, m, arb):
+def best_trade(pol, pools, a, b, m, arb, now):
     """Maximise profit over amount_in with a log grid + golden refinement."""
-    reserve_in = r[1] if route == "XLM->USDC" else r[3]
+    reserve_in = next(p.reserve for p in pools if p.asset == a)
     lo, hi = math.log(max(reserve_in * 1e-7, 1000)), math.log(reserve_in * 0.5)
     grid = [lo + (hi - lo) * i / 40 for i in range(41)]
-    vals = [profit_of(pol, r, anchor, route, int(math.exp(x)), m, arb)[0] for x in grid]
+    vals = [profit_of(pol, pools, a, b, int(math.exp(x)), m, arb, now)[0] for x in grid]
     i = max(range(len(grid)), key=lambda k: vals[k])
     if vals[i] <= 0:
         return None
-    a, b = grid[max(i - 1, 0)], grid[min(i + 1, len(grid) - 1)]
+    lo_, hi_ = grid[max(i - 1, 0)], grid[min(i + 1, len(grid) - 1)]
     g = (math.sqrt(5) - 1) / 2
     for _ in range(30):
-        c, d = b - g * (b - a), a + g * (b - a)
-        if profit_of(pol, r, anchor, route, int(math.exp(c)), m, arb)[0] > \
-           profit_of(pol, r, anchor, route, int(math.exp(d)), m, arb)[0]:
-            b = d
+        c, d = hi_ - g * (hi_ - lo_), lo_ + g * (hi_ - lo_)
+        if profit_of(pol, pools, a, b, int(math.exp(c)), m, arb, now)[0] > \
+           profit_of(pol, pools, a, b, int(math.exp(d)), m, arb, now)[0]:
+            hi_ = d
         else:
-            a = c
-    amt = int(math.exp((a + b) / 2))
-    p, res = profit_of(pol, r, anchor, route, amt, m, arb)
+            lo_ = c
+    amount = int(math.exp((lo_ + hi_) / 2))
+    p, res = profit_of(pol, pools, a, b, amount, m, arb, now)
     if res is None or p < arb.min_profit:
         return None
-    return amt, p, res
+    return amount, p, res
 
 
-def marginal_ok(pol, r, anchor, m, arb):
-    """Cheap pre-check: can an infinitesimal trade beat the costs?"""
-    p = xlm_price(r) / ONE
-    if pol.kind == "aqua":
-        f = pol.flat / ONE
-    elif pol.kind == "flat":
-        f = pol.flat / ONE
-    else:
-        f = fee_for_price(pol, xlm_price(r), anchor) / ONE
-    keep = (1 - f) ** 2
-    if p * keep > m * (1 + arb.hedge):
-        return "XLM->USDC"
-    if m * (1 - arb.hedge) * keep > p:
-        return "USDC->XLM"
-    return None
+def small_swap_fees(pol, pools, now):
+    """Each pool's fee for a very small hop now (9 decimals)."""
+    return {p.asset: pool_state(pol, pools, i, now).fee for i, p in enumerate(pools)}
+
+
+def edges(pools, fees, m, arb):
+    """Ordered pairs whose marginal swap beats the costs, best edge first."""
+    price = {p.asset: p.reserve / p.hitz for p in pools}  # asset per HITZ
+    out = []
+    for a, b in itertools.permutations(price, 2):
+        keep = (1 - fees[a] / ONE) * (1 - fees[b] / ONE)
+        edge = price[b] / price[a] * keep * m[b] * (1 - arb.cost(b)) / (m[a] * (1 + arb.cost(a))) - 1
+        if edge > 0:
+            out.append((edge, a, b))
+    return sorted(out, reverse=True)
 
 
 def month_of(ts):
-    import datetime
     return datetime.datetime.fromtimestamp(ts, datetime.UTC).strftime("%Y-%m")
 
 
-def run(pol: Policy, r0, candles, t0, t1, arb: Arb, path="close"):
-    r = r0
-    start = bisect.bisect_left([c[0] for c in candles], t0)
-    m0 = candles[start][4]
-    res = Result(pol.name, v_start=vault_value(r0, m0))
-    A = (xlm_price(r0), candles[start][0])
-    for c in candles[start:]:
-        ts = c[0]
+def run(pol, pools0, market, t0, t1, arb, path="close"):
+    """Trade `pools0` (seeded at t0) against `market` from t0 to t1."""
+    pools = pools0
+    assets = [p.asset for p in pools0]
+    others = [a for a in assets if a != NUMERAIRE]
+    lead = market.times[others[0]]
+    start = bisect.bisect_left(lead, t0)
+    m0 = market.path(lead[start], assets, "close")[0][1]
+    res = Result(pol.name, v_start=vault_value(pools0, m0))
+    res.lag = {a: 0.0 for a in others}
+    pairs = list(itertools.combinations(assets, 2))
+    res.pair_fee = {pr: 0.0 for pr in pairs}
+    res.pair_swaps = {pr: 0 for pr in itertools.permutations(assets, 2)}
+    m = m0
+    for ts in lead[start:]:
         if ts >= t1:
             break
-        if path == "ohlc":
-            o, h, l, cl = c[1], c[2], c[3], c[4]
-            seq = [(ts, o), (ts + 20, l if cl >= o else h), (ts + 40, h if cl >= o else l), (ts + 59, cl)]
-        else:
-            seq = [(ts + 59, c[4])]
+        seq = market.path(ts, assets, path)
         mth = month_of(ts)
         if mth not in res.monthly:
             # Snapshot the backing at the start of each month (exact, at market).
+            m_open = market.path(ts, assets, "ohlc")[0][1]
             res.monthly[mth] = {"swaps": 0, "volume": 0.0, "arb": 0.0, "fee": 0.0,
-                                "v_open": vault_value(r, c[1]), "hold_open": vault_value(r0, c[1])}
+                                "v_open": vault_value(pools, m_open), "hold_open": vault_value(pools0, m_open)}
         mm = res.monthly[mth]
         for now, m in seq:
-            anchor = anchor_now(pol, r, A[0], A[1], now)
-            calls = 0
-            traded = False
+            calls, traded = 0, False
             while calls < arb.max_calls:
-                route = marginal_ok(pol, r, anchor, m, arb)
-                if not route:
+                fees = small_swap_fees(pol, pools, now)
+                done = False
+                for _, a, b in edges(pools, fees, m, arb):
+                    bt = best_trade(pol, pools, a, b, m, arb, now)
+                    if not bt:
+                        continue
+                    amount, p, (pools2, out, hops) = bt
+                    vol = amount / U * m[a]
+                    fee_usd = vol * (1 - math.prod(1 - h.fee_rate / ONE for h in hops))
+                    res.arb_gross += vault_value(pools, m) - vault_value(pools2, m)
+                    pools = pools2
+                    res.swaps += 1
+                    res.volume_usd += vol
+                    res.arb_profit += p
+                    res.fee_usd += fee_usd
+                    res.pair_swaps[(a, b)] += 1
+                    mm["swaps"] += 1
+                    mm["volume"] += vol
+                    mm["arb"] += p
+                    mm["fee"] += fee_usd
+                    done = True
                     break
-                bt = best_trade(pol, r, anchor, route, m, arb)
-                if not bt:
+                if not done:
                     break
-                amt, p, (r2, out, fees) = bt
-                vol = amt / U * m if route == "XLM->USDC" else amt / U
-                # Fee value retained by the vault, approx in USD.
-                fee_usd = vol * (1 - math.prod(1 - f / ONE for f in fees))
-                v_before = vault_value(r, m)
-                res.arb_gross += v_before - vault_value(r2, m)
-                r = r2
-                A = (anchor, now)  # the contract stores the pre-trade anchor
-                res.swaps += 1
-                res.volume_usd += vol
-                res.arb_profit += p
-                res.fee_usd += fee_usd
-                mm["swaps"] += 1
-                mm["volume"] += vol
-                mm["arb"] += p
-                mm["fee"] += fee_usd
                 calls += 1
                 traded = True
             if traded:
                 res.steps_traded += 1
-            p_v = xlm_price(r) / ONE
-            res.track_err_sum += abs(p_v / m - 1)
-            res.track_err_n += 1
-            if pol.kind == "dynamic" and fee_for_price(pol, xlm_price(r), anchor_now(pol, r, A[0], A[1], now)) <= pol.floor * 1001 // 1000:
+            res.steps += 1
+            usd = rate_usd(pools)
+            for a in others:
+                res.lag[a] += abs(usd[a] / m[a] - 1)
+            fees = small_swap_fees(pol, pools, now)
+            for a, b in pairs:
+                res.pair_fee[(a, b)] += 1 - (1 - fees[a] / ONE) * (1 - fees[b] / ONE)
+            if pol.kind == "dislocation" and max(fees.values()) <= pol.floor * 1001 // 1000:
                 res.floor_steps += 1
-        last_m = seq[-1][1]
-    res.v_end = vault_value(r, last_m)
-    res.v_hold_end = vault_value(r0, last_m)
-    res.final_reserves = r
+    res.v_end = vault_value(pools, m)
+    res.v_hold_end = vault_value(pools0, m)
+    res.final = pools
     return res
+
+
+def rate_usd(pools):
+    """Each asset's vault price in USDC."""
+    return {p.asset: rate(pools, p.asset, NUMERAIRE) / ONE for p in pools if p.asset != NUMERAIRE}
