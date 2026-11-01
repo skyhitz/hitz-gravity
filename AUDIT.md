@@ -245,7 +245,7 @@ Gravity model, but the swap UI has to say it before anyone buys.
 ## Process findings
 
 - **P-1 (fixed)** `.github/workflows/contracts.yml` runs the tests, builds the
-  release Wasm and checks it against the 128 KiB mainnet limit (token 55.8 KB
+  release Wasm and checks it against the 128 KiB mainnet limit (token 55.7 KB
   and vault 40.1 KB unoptimized), runs the mainnet migration rehearsal, and
   fails if test snapshots weren't committed.
 - **P-2 (fixed)** `research/vault-backtest` holds the data fetcher, an exact
