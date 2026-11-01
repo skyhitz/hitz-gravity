@@ -11,7 +11,9 @@ use soroban_sdk::{
     xdr::{ContractEventBody, ScVal},
     Address, Env, IntoVal, String, Symbol,
 };
-use sovereign_vault::{fee_for_dislocation, SovereignVault, SovereignVaultClient, ANCHOR_TAU_SECS};
+use sovereign_vault::{
+    fee_for_dislocation, SovereignVault, SovereignVaultClient, ANCHOR_TAU_SECS, UPGRADE_DELAY_SECS,
+};
 
 const U: i128 = 10_000_000;
 
@@ -94,6 +96,7 @@ impl ExampleBot {
 
 struct Setup {
     env: Env,
+    admin: Address,
     vault: SovereignVaultClient<'static>,
     hitz: GravityTokenClient<'static>,
     xlm: Address,
@@ -139,6 +142,7 @@ fn setup() -> Setup {
     vault.seed(&usdc, &(31_000_000 * U), &(1_000 * U));
     Setup {
         env,
+        admin,
         vault,
         hitz,
         xlm,
@@ -200,7 +204,7 @@ fn a_bot_can_hold_hitz_mid_transaction_and_still_sell_it() {
 
 /// The token's `vaulted_event` values for `who` in the last invocation.
 fn vaulted_flags(s: &Setup, who: &Address) -> std::vec::Vec<bool> {
-    let who: ScVal = who.try_into().unwrap();
+    let who: ScVal = who.into();
     let all = s.env.events().all();
     let evs = all.filter_by_contract(&s.hitz.address);
     evs.events()
@@ -227,15 +231,15 @@ fn i128_of(v: &ScVal) -> i128 {
     }
 }
 
-/// (name, topics after the name, data as (key, value) pairs) for each event
-/// the vault emitted in the last invocation.
-fn vault_events(
-    s: &Setup,
-) -> std::vec::Vec<(
+/// An event as (name, topics after the name, data as (key, value) pairs).
+type Event = (
     std::string::String,
     std::vec::Vec<ScVal>,
     std::vec::Vec<(std::string::String, ScVal)>,
-)> {
+);
+
+/// Every event the vault emitted in the last invocation.
+fn vault_events(s: &Setup) -> std::vec::Vec<Event> {
     let all = s.env.events().all();
     let evs = all.filter_by_contract(&s.vault.address);
     evs.events()
@@ -255,6 +259,7 @@ fn vault_events(
                         })
                         .collect()
                 }
+                ScVal::Void => std::vec::Vec::new(),
                 other => panic!("event data is not a map: {other:?}"),
             };
             (name, body.topics[1..].to_vec(), data)
@@ -287,7 +292,7 @@ fn swap_events_carry_what_the_guide_says() {
     ];
     // XLM in through the XLM pool, USDC out of the USDC pool.
     for ((_, topics, data), asset) in evs[..2].iter().zip([&s.xlm, &s.usdc]) {
-        let asset_val: ScVal = asset.try_into().unwrap();
+        let asset_val: ScVal = asset.into();
         assert_eq!(topics, &[asset_val]);
         let keys: std::vec::Vec<&str> = data.iter().map(|d| d.0.as_str()).collect();
         assert_eq!(keys, hop_keys);
@@ -307,7 +312,7 @@ fn swap_events_carry_what_the_guide_says() {
     assert_eq!(i128_of(&xlm_hop[7].1), x.hitz);
 
     let (_, topics, data) = &evs[2];
-    let alice_val: ScVal = (&alice).try_into().unwrap();
+    let alice_val: ScVal = (&alice).into();
     assert_eq!(topics, &[alice_val.clone(), alice_val]);
     let keys: std::vec::Vec<&str> = data.iter().map(|d| d.0.as_str()).collect();
     assert_eq!(keys, ["amount_in", "amount_out", "token_in", "token_out"]);
@@ -339,4 +344,87 @@ fn a_dislocation_decays_as_documented() {
     assert_eq!(pool.dislocation, later.abs());
     assert_eq!(pool.fee, fee_for_dislocation(later));
     assert!(pool.fee < first_fee && first_fee > 10_000_000);
+}
+
+fn keys(data: &[(std::string::String, ScVal)]) -> std::vec::Vec<&str> {
+    data.iter().map(|d| d.0.as_str()).collect()
+}
+
+#[test]
+fn listing_liquidity_and_admin_events_carry_what_the_guide_says() {
+    let s = setup();
+    let eurc = s
+        .env
+        .register_stellar_asset_contract_v2(s.admin.clone())
+        .address();
+    let eurc_val: ScVal = (&eurc).into();
+    let one = |name: &str| {
+        let evs = vault_events(&s);
+        assert_eq!(evs.len(), 1, "{name}");
+        assert_eq!(evs[0].0, name);
+        evs.into_iter().next().unwrap()
+    };
+
+    s.vault.propose_listing(&eurc);
+    let (_, topics, data) = one("listing_proposed");
+    assert_eq!(topics, std::slice::from_ref(&eurc_val));
+    assert_eq!(keys(&data), ["eta"]);
+    s.vault.cancel_listing();
+    let (_, topics, data) = one("listing_cancelled");
+    assert_eq!((topics, data.len()), (std::vec![eurc_val.clone()], 0));
+
+    s.vault.propose_listing(&eurc);
+    s.env
+        .ledger()
+        .with_mut(|l| l.timestamp += UPGRADE_DELAY_SECS);
+    s.vault.list_asset(&eurc);
+    let (_, topics, data) = one("listed");
+    assert_eq!((topics, data.len()), (std::vec![eurc_val.clone()], 0));
+    assert_eq!(
+        s.vault.assets(),
+        vec![&s.env, s.xlm.clone(), s.usdc.clone(), eurc.clone()]
+    );
+
+    s.hitz.mint(&s.admin, &(10_000_000 * U));
+    StellarAssetClient::new(&s.env, &eurc).mint(&s.admin, &(400 * U));
+    s.vault.seed(&eurc, &(10_000_000 * U), &(400 * U));
+    let (_, topics, data) = one("seeded");
+    assert_eq!(topics, std::slice::from_ref(&eurc_val));
+    assert_eq!(keys(&data), ["amount", "hitz"]);
+    assert_eq!(
+        (i128_of(&data[0].1), i128_of(&data[1].1)),
+        (400 * U, 10_000_000 * U)
+    );
+
+    let fan = Address::generate(&s.env);
+    s.hitz.mint(&fan, &(3_000 * U));
+    StellarAssetClient::new(&s.env, &eurc).mint(&fan, &U);
+    let amount = s.vault.deposit(&fan, &eurc, &(3_000 * U), &0, &U);
+    let (_, topics, data) = one("deposit");
+    let fan_val: ScVal = (&fan).into();
+    assert_eq!(topics, [fan_val, eurc_val.clone()]);
+    assert_eq!(keys(&data), ["amount", "hitz"]);
+    assert_eq!(
+        (i128_of(&data[0].1), i128_of(&data[1].1)),
+        (amount, 3_000 * U)
+    );
+
+    // The new asset trades against the others, one hop event per pool.
+    let alice = Address::generate(&s.env);
+    StellarAssetClient::new(&s.env, &eurc).mint(&alice, &U);
+    s.vault.swap(&alice, &alice, &eurc, &s.xlm, &U, &0);
+    let evs = vault_events(&s);
+    let xlm_val: ScVal = (&s.xlm).into();
+    assert_eq!(evs[0].1, [eurc_val]);
+    assert_eq!(evs[1].1, [xlm_val]);
+
+    // Freezing the code keeps listing; renouncing ends both.
+    let admin_val: ScVal = (&s.admin).into();
+    s.vault.renounce_upgrades();
+    let (_, topics, data) = one("upgrades_renounced");
+    assert_eq!((topics, data.len()), (std::vec![admin_val.clone()], 0));
+    assert!(!s.vault.upgradable());
+    s.vault.renounce();
+    let (_, topics, data) = one("renounced");
+    assert_eq!((topics, data.len()), (std::vec![admin_val], 0));
 }
