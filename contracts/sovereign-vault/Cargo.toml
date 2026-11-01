@@ -8,6 +8,11 @@ publish = false
 crate-type = ["lib", "cdylib"]
 doctest = false
 
+[features]
+# Runs tests/mainnet_migration.rs, which needs the token's release Wasm:
+# `cargo build --target wasm32v1-none --release -p gravity-token` first.
+migration-rehearsal = []
+
 [dependencies]
 soroban-sdk = { workspace = true }
 
