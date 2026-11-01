@@ -51,7 +51,9 @@
 //! ## Admin
 //! Two powers, both public for 7 days before they run: upgrading the code
 //! and listing a new trusted asset. Seeding a listed asset is the admin's
-//! too. `renounce` ends all of it for good.
+//! too. `renounce_upgrades` ends upgrades for good and keeps listing, so the
+//! code can be frozen while trusted assets are still added later; `renounce`
+//! ends everything.
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, panic_with_error, token,
@@ -193,6 +195,8 @@ enum DataKey {
     Pools,
     PendingUpgrade,
     PendingListing,
+    /// Set by `renounce_upgrades`: the code can never change again.
+    UpgradesRenounced,
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -280,6 +284,12 @@ pub struct UpgradeCancelled {
 #[contractevent]
 pub struct Upgraded {
     wasm_hash: BytesN<32>,
+}
+
+#[contractevent]
+pub struct UpgradesRenounced {
+    #[topic]
+    admin: Address,
 }
 
 #[contractevent]
@@ -575,6 +585,13 @@ impl SovereignVault {
         env.storage().instance().get(&DataKey::Admin)
     }
 
+    /// Whether the code can still change: false once `renounce_upgrades` or
+    /// `renounce` has run.
+    pub fn upgradable(env: Env) -> bool {
+        let s = env.storage().instance();
+        s.has(&DataKey::Admin) && !s.has(&DataKey::UpgradesRenounced)
+    }
+
     pub fn pending_upgrade(env: Env) -> Option<PendingUpgrade> {
         env.storage().instance().get(&DataKey::PendingUpgrade)
     }
@@ -652,6 +669,7 @@ impl SovereignVault {
     /// 7 days. A new proposal replaces the pending one and restarts the clock.
     pub fn propose_upgrade(env: Env, wasm_hash: BytesN<32>) {
         require_admin(&env);
+        require_upgradable(&env);
         let eta = env
             .ledger()
             .timestamp()
@@ -686,6 +704,7 @@ impl SovereignVault {
     /// Install the proposed code once the 7 days have passed.
     pub fn upgrade(env: Env, wasm_hash: BytesN<32>) {
         require_admin(&env);
+        require_upgradable(&env);
         let p: PendingUpgrade = env
             .storage()
             .instance()
@@ -704,6 +723,18 @@ impl SovereignVault {
         .publish(&env);
         bump(&env);
         env.deployer().update_current_contract_wasm(wasm_hash);
+    }
+
+    /// Give up upgrades for good: the code can never change again, and any
+    /// pending upgrade is dropped. The admin keeps listing new trusted assets
+    /// (still timelocked) and seeding them, until `renounce`.
+    pub fn renounce_upgrades(env: Env) {
+        let admin = require_admin(&env);
+        let s = env.storage().instance();
+        s.set(&DataKey::UpgradesRenounced, &true);
+        s.remove(&DataKey::PendingUpgrade);
+        UpgradesRenounced { admin }.publish(&env);
+        bump(&env);
     }
 
     /// Give up the admin role for good: no upgrade, listing or seeding can
@@ -1089,6 +1120,12 @@ fn read_hitz(env: &Env) -> Address {
 fn require_seeded(env: &Env, p: &Pool) {
     if p.hitz <= 0 || p.reserve <= 0 {
         panic_with_error!(env, Error::NotSeeded);
+    }
+}
+
+fn require_upgradable(env: &Env) {
+    if env.storage().instance().has(&DataKey::UpgradesRenounced) {
+        panic_with_error!(env, Error::Renounced);
     }
 }
 

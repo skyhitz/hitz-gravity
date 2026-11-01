@@ -1125,6 +1125,7 @@ fn renouncing_makes_the_vault_immutable_and_trading_carries_on() {
     w.vault.propose_listing(&eurc);
     w.vault.renounce();
     assert_eq!(w.vault.admin(), None);
+    assert!(!w.vault.upgradable());
     assert_eq!(w.vault.pending_upgrade(), None);
     assert_eq!(w.vault.pending_listing(), None);
     w.advance(UPGRADE_DELAY_SECS);
@@ -1143,6 +1144,44 @@ fn renouncing_makes_the_vault_immutable_and_trading_carries_on() {
     let alice = w.user(0, &[(&w.xlm, 10 * U)]);
     assert!(w.swap(&alice, &w.xlm, &w.h(), 10 * U) > 0);
     w.assert_books_balance();
+}
+
+#[test]
+fn renouncing_upgrades_freezes_the_code_and_keeps_listing() {
+    let w = World::new();
+    let hash = w.env.deployer().upload_contract_wasm(OTHER_WASM);
+    assert!(w.vault.upgradable());
+    w.vault.propose_upgrade(&hash);
+    w.vault.renounce_upgrades();
+    assert!(!w.vault.upgradable());
+    assert_eq!(w.vault.pending_upgrade(), None);
+    assert_eq!(w.vault.admin(), Some(w.admin.clone()));
+    w.advance(UPGRADE_DELAY_SECS);
+    assert_eq!(w.vault.try_upgrade(&hash), Err(Ok(ce(Error::Renounced))));
+    assert_eq!(
+        w.vault.try_propose_upgrade(&hash),
+        Err(Ok(ce(Error::Renounced)))
+    );
+    assert_eq!(
+        w.vault.try_cancel_upgrade(),
+        Err(Ok(ce(Error::NoPendingUpgrade)))
+    );
+
+    // A trusted asset can still be listed, timelocked, and seeded.
+    let eurc = w.new_asset();
+    w.list(&eurc);
+    w.seed(&eurc, 10_000_000 * U, 400 * U);
+    let alice = w.user(0, &[(&eurc, 10 * U)]);
+    assert!(w.swap(&alice, &eurc, &w.usdc, 10 * U) > 0);
+    w.assert_books_balance();
+
+    // Renouncing the rest ends listing too.
+    w.vault.renounce();
+    assert!(!w.vault.upgradable());
+    assert_eq!(
+        w.vault.try_propose_listing(&w.new_asset()),
+        Err(Ok(ce(Error::Renounced)))
+    );
 }
 
 #[test]
@@ -1243,6 +1282,8 @@ fn admin_actions_need_the_admins_signature() {
     w.advance(UPGRADE_DELAY_SECS);
     w.vault.list_asset(&eurc);
     assert_eq!(signer(&w), w.admin);
+    w.vault.renounce_upgrades();
+    assert_eq!(signer(&w), w.admin);
     w.vault.renounce();
     assert_eq!(signer(&w), w.admin);
 
@@ -1256,8 +1297,10 @@ fn admin_actions_need_the_admins_signature() {
     assert!(w.vault.try_seed(&w.xlm, &SEED_HITZ_XLM, &SEED_XLM).is_err());
     assert!(w.vault.try_propose_upgrade(&hash).is_err());
     assert!(w.vault.try_propose_listing(&eurc).is_err());
+    assert!(w.vault.try_renounce_upgrades().is_err());
     assert!(w.vault.try_renounce().is_err());
     assert_eq!(w.vault.admin(), Some(w.admin.clone()));
+    assert!(w.vault.upgradable());
 }
 
 // ─────────────────────────────────────────────────────────────
