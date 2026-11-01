@@ -9,8 +9,9 @@ crate-type = ["lib", "cdylib"]
 doctest = false
 
 [features]
-# Runs tests/mainnet_migration.rs, which needs the token's release Wasm:
-# `cargo build --target wasm32v1-none --release -p gravity-token` first.
+# Runs the tests that need the release Wasm builds (tests/mainnet_migration.rs
+# and tests/release_budget.rs):
+# `cargo build --target wasm32v1-none --release -p gravity-token -p sovereign-vault` first.
 migration-rehearsal = []
 
 [dependencies]

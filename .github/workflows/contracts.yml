@@ -5,7 +5,9 @@
 #      contract size limit (128 KiB, `contractMaxSizeBytes`).
 #   3. The mainnet migration rehearsal: upgrades the token bytecode that is
 #      live on mainnet to this build and walks the vault migration
-#      (contracts/sovereign-vault/tests/mainnet_migration.rs).
+#      (contracts/sovereign-vault/tests/mainnet_migration.rs), and the
+#      release vault with every asset it can list must swap within the
+#      network's per-transaction limits (tests/release_budget.rs).
 #   4. Test snapshots are committed and current, so reviewers see every
 #      change in ledger state or events.
 #
@@ -64,8 +66,8 @@ jobs:
             fi
           done
 
-      - name: Mainnet migration rehearsal
-        run: cargo test --locked -p sovereign-vault --features migration-rehearsal --test mainnet_migration
+      - name: Mainnet migration rehearsal and release budget
+        run: cargo test --locked -p sovereign-vault --features migration-rehearsal --test mainnet_migration --test release_budget -- --nocapture
 
       - name: Test snapshots are committed
         run: |
