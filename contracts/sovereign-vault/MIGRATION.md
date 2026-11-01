@@ -70,6 +70,11 @@ The live code's `upgrade` installs immediately. From here on every upgrade
 is `propose_upgrade`, 7 days, `upgrade`. Verify `admin`, `total_mass`,
 `safety_limit` and `pending_upgrade` right after.
 
+From this step the token's SEP-41 events use the standard names (`transfer`,
+`mint`, `burn`, `approve`) instead of `transfer_event` and the rest. The
+ingester handles both; anything else that matches the old names needs to
+accept the new ones before this step.
+
 ### D. Deploy, register and seed the vault
 
 1. Deploy the vault from the `sovereign-vault-v*` release WASM with

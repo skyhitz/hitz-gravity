@@ -119,7 +119,8 @@ function decodeScVal(scv: StellarSdk.xdr.ScVal | string | null | undefined): unk
 function parseEvent(evt: StellarSdk.rpc.Api.EventResponse): EventRow {
   const topics = (evt.topic ?? []).map(decodeScVal);
   let name = typeof topics[0] === "string" ? topics[0] : String(topics[0] ?? "");
-  // #[contractevent] structs publish `<snake_name>_event`; reports use the bare name.
+  // Gravity events publish `<snake_name>_event`, and so did the SEP-41 ones before
+  // token v2 (now `transfer`, `mint`, `burn`, `approve`); reports use the bare name.
   if (name.endsWith("_event")) name = name.slice(0, -"_event".length);
   return {
     ledger: evt.ledger,

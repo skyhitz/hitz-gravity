@@ -251,10 +251,12 @@ amounts to its pool.
   but it can't send HITZ anywhere else. A bot that buys and sells
   HITZ inside one transaction is vaulted for a moment and released when it
   sells; nothing fails.
-- The HITZ token names its events `transfer_event`, `vaulted_event`,
-  `mint_event`, `burn_event` (not SEP-41's bare `transfer`). `transfer_event`
-  has topics `[from, to]` and the amount as data; `vaulted_event` has the
-  account as topic and the new state as data.
+- **HITZ token events.** The standard ones follow SEP-41: `transfer`
+  `[from, to]`, `mint` `[to]` and `burn` `[from]` with the amount as data, and
+  `approve` `[from, spender]` with `[amount, expiration_ledger]`. Until this
+  upgrade they were named `transfer_event`, `mint_event`, `burn_event` and
+  `approve_event`, so older history uses those names. The Gravity events keep
+  theirs: `vaulted_event` has the account as topic and the new state as data.
 
 ## What can change
 

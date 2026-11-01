@@ -125,8 +125,21 @@ pub enum DataKey {
 // ─────────────────────────────────────────────────────────────
 //  EVENTS (SEP-41 + Gravity-specific)
 // ─────────────────────────────────────────────────────────────
+//
+//  The four SEP-41 events carry the standard's names and layouts, so
+//  wallets, explorers and indexers recognize HITZ movements:
+//
+//    transfer  ["transfer", from, to]       amount
+//    mint      ["mint", to]                 amount
+//    burn      ["burn", from]               amount
+//    approve   ["approve", from, spender]   [amount, expiration_ledger]
+//
+//  Up to v1.0.0 they were published under the derived names
+//  (`transfer_event`, …), so history before the upgrade uses those.
+//  The Gravity-specific events keep their derived names
+//  (`vaulted_event`, `pool_registered_event`, …).
 
-#[contractevent(data_format = "single-value")]
+#[contractevent(topics = ["transfer"], data_format = "single-value")]
 pub struct TransferEvent {
     #[topic]
     from: Address,
@@ -135,21 +148,21 @@ pub struct TransferEvent {
     amount: i128,
 }
 
-#[contractevent(data_format = "single-value")]
+#[contractevent(topics = ["mint"], data_format = "single-value")]
 pub struct MintEvent {
     #[topic]
     to: Address,
     amount: i128,
 }
 
-#[contractevent(data_format = "single-value")]
+#[contractevent(topics = ["burn"], data_format = "single-value")]
 pub struct BurnEvent {
     #[topic]
     from: Address,
     amount: i128,
 }
 
-#[contractevent]
+#[contractevent(topics = ["approve"], data_format = "vec")]
 pub struct ApproveEvent {
     #[topic]
     from: Address,

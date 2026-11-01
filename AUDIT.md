@@ -43,7 +43,7 @@ small (V-1), and that a bug could not be paused (V-2).
 | P-1 | Medium | No CI ran the contract tests; Wasm build and size never checked | Fixed: `.github/workflows/contracts.yml` |
 | P-2 | Medium | The fee study couldn't be reproduced | Fixed: `research/vault-backtest` |
 | T-4 | Low | Registry entries archived every ~120 days despite daily use | Fixed: bumped on use |
-| T-6 | Low | Token event names don't follow SEP-41 (`transfer_event`, not `transfer`) | Open: one attribute per event |
+| T-6 | Low | Token event names didn't follow SEP-41 (`transfer_event`, not `transfer`) | Fixed: SEP-41 names and layouts |
 | V-4 | Low | The fee ratio rounded down (against the vault) | Fixed: rounds up |
 | V-5 | Low | Tokens sent straight to the vault are stranded | Open: optional `sync` |
 | V-6 | Low | Authorization was never tested (all tests mock auth) | Fixed: three auth tests |
@@ -125,18 +125,22 @@ admin are unchanged, that the frozen pools flow again, and that the next
 upgrade is timelocked. The new storage keys (`Drift`, `PendingUpgrade`,
 `Renounced`) default correctly on existing state. It runs in CI.
 
-### T-6 (Low, open) Token event names don't follow SEP-41
+### T-6 (Low, fixed) Token event names didn't follow SEP-41
 
-The token publishes `transfer_event`, `mint_event`, `burn_event` and
-`approve_event`: `#[contractevent]` derives the names from the struct names.
-SEP-41 calls them `transfer`, `mint`, `burn` and `approve`. This is already the
-case on mainnet. The ingester strips the suffix, but wallets, explorers and
-indexers that follow SEP-41 may not see HITZ transfers. The fix is one
-attribute per event, e.g. `#[contractevent(topics = ["transfer"],
-data_format = "single-value")]`; the Gravity-specific events can keep their
-names. It changes the event format, so update anything that matches the old
-names (the ingester already handles both). If you want it, this upgrade is the
-time: the next one waits 7 days.
+The live token publishes `transfer_event`, `mint_event`, `burn_event` and
+`approve_event` (`#[contractevent]` derives the names from the struct names),
+and its approve data is a map keyed `expiration_ledger`, which matches
+neither of SEP-41's formats. Wallets, explorers and indexers that follow
+SEP-41 may not see HITZ movements.
+
+**Fix.** The four events now use SEP-41 v0.5.2's names and layouts:
+`transfer` `[from, to]`, `mint` `[to]` and `burn` `[from]` with the amount as
+single-value data, and `approve` `[from, spender]` with `[amount,
+expiration_ledger]` as vec data. The Gravity-specific events keep their
+names. Test: `test_sep41_events_use_the_standard_names_and_layouts`; the
+migration rehearsal checks the switch on the live bytecode. History before the
+upgrade keeps the old names; the ingester already normalizes both, nothing
+reads approve data, and mainnet has never emitted an approve event.
 
 ## Vault findings
 

@@ -1518,7 +1518,7 @@
           "v0": {
             "topics": [
               {
-                "symbol": "transfer_event"
+                "symbol": "transfer"
               },
               {
                 "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"

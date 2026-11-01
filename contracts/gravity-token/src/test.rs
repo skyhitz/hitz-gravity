@@ -1801,3 +1801,100 @@ fn test_registrations_are_kept_alive_by_use() {
         ttl()
     );
 }
+
+// ─────────────────────────────────────────────────────────────
+//  SEP-41 EVENTS
+// ─────────────────────────────────────────────────────────────
+
+/// Every event the token emitted in the last invocation, as
+/// (name, remaining topics, data).
+fn token_events(
+    env: &Env,
+    token: &Address,
+) -> std::vec::Vec<(
+    std::string::String,
+    std::vec::Vec<soroban_sdk::xdr::ScVal>,
+    soroban_sdk::xdr::ScVal,
+)> {
+    use soroban_sdk::xdr::{ContractEventBody, ScVal};
+    let all = env.events().all();
+    let scoped = all.filter_by_contract(token);
+    scoped
+        .events()
+        .iter()
+        .map(|e| {
+            let ContractEventBody::V0(body) = &e.body;
+            let name = match &body.topics[0] {
+                ScVal::Symbol(s) => s.0.to_utf8_string_lossy(),
+                other => panic!("event name is not a symbol: {other:?}"),
+            };
+            (name, body.topics[1..].to_vec(), body.data.clone())
+        })
+        .collect()
+}
+
+#[test]
+fn test_sep41_events_use_the_standard_names_and_layouts() {
+    use soroban_sdk::xdr::{Int128Parts, ScVal, ScVec, VecM};
+    let addr = |a: &Address| -> ScVal { a.try_into().unwrap() };
+    let amount = |v: i128| {
+        ScVal::I128(Int128Parts {
+            hi: (v >> 64) as i64,
+            lo: v as u64,
+        })
+    };
+    let one = |name: &str, topics: std::vec::Vec<ScVal>, data: ScVal| {
+        std::vec![(std::string::String::from(name), topics, data)]
+    };
+
+    let (env, _admin, client) = setup_env();
+    add_mass(&env, &client);
+    let token = client.address.clone();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    // Each call emits exactly its SEP-41 event (and no `*_event` twin).
+    client.mint(&alice, &(100 * H));
+    assert_eq!(
+        token_events(&env, &token),
+        one("mint", std::vec![addr(&alice)], amount(100 * H))
+    );
+
+    client.transfer(&alice, &bob, &(10 * H));
+    assert_eq!(
+        token_events(&env, &token),
+        one(
+            "transfer",
+            std::vec![addr(&alice), addr(&bob)],
+            amount(10 * H)
+        )
+    );
+
+    client.burn(&bob, &H);
+    assert_eq!(
+        token_events(&env, &token),
+        one("burn", std::vec![addr(&bob)], amount(H))
+    );
+
+    // approve uses SEP-41's vec data format: [amount, expiration ledger].
+    let expiry = env.ledger().sequence() + 1_000;
+    client.approve(&alice, &bob, &(5 * H), &expiry);
+    let data = ScVal::Vec(Some(ScVec(
+        VecM::try_from(std::vec![amount(5 * H), ScVal::U32(expiry)]).unwrap(),
+    )));
+    assert_eq!(
+        token_events(&env, &token),
+        one("approve", std::vec![addr(&alice), addr(&bob)], data)
+    );
+
+    // transfer_from is a transfer.
+    client.transfer_from(&bob, &alice, &bob, &(2 * H));
+    assert_eq!(
+        token_events(&env, &token),
+        one(
+            "transfer",
+            std::vec![addr(&alice), addr(&bob)],
+            amount(2 * H)
+        )
+    );
+}

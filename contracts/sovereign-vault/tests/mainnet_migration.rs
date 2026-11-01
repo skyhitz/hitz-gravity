@@ -18,8 +18,9 @@
 
 use gravity_token::GravityTokenClient;
 use soroban_sdk::{
-    testutils::{Address as _, EnvTestConfig, Ledger as _},
+    testutils::{Address as _, EnvTestConfig, Events as _, Ledger as _},
     token::{Client as TokenClient, StellarAssetClient},
+    xdr::{ContractEventBody, ScVal},
     Address, BytesN, Env, String,
 };
 use sovereign_vault::{SovereignVault, SovereignVaultClient, ONE};
@@ -113,6 +114,12 @@ fn mainnet_migration_keeps_s_and_l_and_ends_with_a_final_registry() {
     let lp_xlm = AQUA_XLM_POOL - AQUA_PROTOCOL_FEES;
     hitz.transfer(&aqua_usdc, &admin, &lp_usdc);
     hitz.transfer(&aqua_xlm, &admin, &lp_xlm);
+    // The live code names the event `transfer_event` (the pool is also
+    // vaulted on this, its first transfer since step A).
+    assert_eq!(
+        event_names(&env, &token_id),
+        ["vaulted_event", "transfer_event"]
+    );
     let wallet = ADMIN_WALLET + lp_usdc + lp_xlm;
     assert_eq!(hitz.balance(&admin), wallet);
     assert_eq!(hitz.total_mass(), wallet);
@@ -125,6 +132,9 @@ fn mainnet_migration_keeps_s_and_l_and_ends_with_a_final_registry() {
     assert_eq!(hitz.admin(), Some(admin.clone()));
     // Every later upgrade waits 7 days.
     assert!(hitz.try_upgrade(&new_hash).is_err());
+    // From here on the token's SEP-41 events carry the standard names.
+    hitz.transfer(&holder, &Address::generate(&env), &H);
+    assert_eq!(event_names(&env, &token_id), ["transfer"]);
 
     // ── D. Deploy, register and seed the vault ───────────────────
     let xlm = env
@@ -183,4 +193,21 @@ fn mainnet_migration_keeps_s_and_l_and_ends_with_a_final_registry() {
     assert_eq!(TokenClient::new(&env, &token_id).balance(&trader), out);
     let out = vault.swap(&trader, &trader, &token_id, &usdc, &out, &0);
     assert!(out > 0);
+}
+
+/// Names of the events `contract` emitted in the last invocation.
+fn event_names(env: &Env, contract: &Address) -> std::vec::Vec<std::string::String> {
+    let all = env.events().all();
+    let scoped = all.filter_by_contract(contract);
+    scoped
+        .events()
+        .iter()
+        .map(|e| {
+            let ContractEventBody::V0(body) = &e.body;
+            match &body.topics[0] {
+                ScVal::Symbol(s) => s.0.to_utf8_string_lossy(),
+                other => panic!("event name is not a symbol: {other:?}"),
+            }
+        })
+        .collect()
 }
