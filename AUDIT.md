@@ -43,6 +43,7 @@ small (V-1), and that a bug could not be paused (V-2).
 | P-1 | Medium | No CI ran the contract tests; Wasm build and size never checked | Fixed: `.github/workflows/contracts.yml` |
 | P-2 | Medium | The fee study couldn't be reproduced | Fixed: `research/vault-backtest` |
 | T-4 | Low | Registry entries archived every ~120 days despite daily use | Fixed: bumped on use |
+| T-6 | Low | Token event names don't follow SEP-41 (`transfer_event`, not `transfer`) | Open: one attribute per event |
 | V-4 | Low | The fee ratio rounded down (against the vault) | Fixed: rounds up |
 | V-5 | Low | Tokens sent straight to the vault are stranded | Open: optional `sync` |
 | V-6 | Low | Authorization was never tested (all tests mock auth) | Fixed: three auth tests |
@@ -123,6 +124,19 @@ pool upgraded by its owner fail), installs this build with the old one-step
 admin are unchanged, that the frozen pools flow again, and that the next
 upgrade is timelocked. The new storage keys (`Drift`, `PendingUpgrade`,
 `Renounced`) default correctly on existing state. It runs in CI.
+
+### T-6 (Low, open) Token event names don't follow SEP-41
+
+The token publishes `transfer_event`, `mint_event`, `burn_event` and
+`approve_event`: `#[contractevent]` derives the names from the struct names.
+SEP-41 calls them `transfer`, `mint`, `burn` and `approve`. This is already the
+case on mainnet. The ingester strips the suffix, but wallets, explorers and
+indexers that follow SEP-41 may not see HITZ transfers. The fix is one
+attribute per event, e.g. `#[contractevent(topics = ["transfer"],
+data_format = "single-value")]`; the Gravity-specific events can keep their
+names. It changes the event format, so update anything that matches the old
+names (the ingester already handles both). If you want it, this upgrade is the
+time: the next one waits 7 days.
 
 ## Vault findings
 
@@ -299,12 +313,14 @@ Starting backing $2,787; holding it untouched ends at $3,047.
 
 ### Arbitrage and integration
 
-- [ ] Publish an integration guide: `swap`, `quote`, `market`, events, and the
-      `authorize_as_current_contract` pattern for contract callers
-- [ ] Reach the bots that traded HITZ: `CBNVK5PE…` (GDJMOSUF), `CDCAZUHZ…`
-      (five signers), `CDWMA5P5…` (GDXGYASW)
-- [ ] Soroswap aggregator adapter
-- [ ] A testnet arbitrage bot that proves the path end to end
+- [x] Integration guide: [`contracts/sovereign-vault/INTEGRATION.md`](contracts/sovereign-vault/INTEGRATION.md),
+      with its patterns tested in `tests/integration_guide.rs`. Fill in the
+      vault address at deployment.
+- [ ] Send it to the four operators behind 92% of past volume (by the
+      account that deployed each bot): `GA6RKSBP…` (`CDCAZUHZ…`,
+      `CC6QAV7J…`), `GDJMOSUF…` (`CBNVK5PE…`), `GDXGYASW…` (`CDWMA5P5…`),
+      `GAXY7IZA…` (`CA6XIZJX…`)
+- [ ] Run the example bot against the vault on testnet end to end
 
 ### Product
 
