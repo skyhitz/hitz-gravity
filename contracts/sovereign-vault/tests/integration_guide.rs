@@ -11,7 +11,7 @@ use soroban_sdk::{
     xdr::{ContractEventBody, ScVal},
     Address, Env, IntoVal, String, Symbol,
 };
-use sovereign_vault::{fee_for_price, SovereignVault, SovereignVaultClient, ANCHOR_TAU_SECS};
+use sovereign_vault::{fee_for_dislocation, SovereignVault, SovereignVaultClient, ANCHOR_TAU_SECS};
 
 const U: i128 = 10_000_000;
 
@@ -124,19 +124,19 @@ fn setup() -> Setup {
         .address();
     let vault_id = env.register(
         SovereignVault,
-        (admin.clone(), hitz_id.clone(), xlm.clone(), usdc.clone()),
+        (
+            admin.clone(),
+            hitz_id.clone(),
+            vec![&env, xlm.clone(), usdc.clone()],
+        ),
     );
     let vault = SovereignVaultClient::new(&env, &vault_id);
     hitz.register_pool_address(&vault_id);
     hitz.mint(&admin, &(88_000_000 * U));
     StellarAssetClient::new(&env, &xlm).mint(&admin, &(10_000 * U));
     StellarAssetClient::new(&env, &usdc).mint(&admin, &(1_000 * U));
-    vault.seed(
-        &(57_000_000 * U),
-        &(10_000 * U),
-        &(31_000_000 * U),
-        &(1_000 * U),
-    );
+    vault.seed(&xlm, &(57_000_000 * U), &(10_000 * U));
+    vault.seed(&usdc, &(31_000_000 * U), &(1_000 * U));
     Setup {
         env,
         vault,
@@ -270,7 +270,7 @@ fn swap_events_carry_what_the_guide_says() {
     let out = s.vault.swap(&alice, &alice, &s.xlm, &s.usdc, &(10 * U), &0);
     // Events are kept for the last invocation only: read them first.
     let evs = vault_events(&s);
-    let r = s.vault.reserves();
+    let (x, u) = (s.vault.pool(&s.xlm), s.vault.pool(&s.usdc));
 
     let names: std::vec::Vec<&str> = evs.iter().map(|e| e.0.as_str()).collect();
     assert_eq!(names, ["hop", "hop", "swap"]);
@@ -278,26 +278,33 @@ fn swap_events_carry_what_the_guide_says() {
     let hop_keys = [
         "amount_in",
         "amount_out",
+        "dislocation",
         "fee_amount",
         "fee_rate",
         "hitz_in",
+        "reserve_asset",
         "reserve_hitz",
-        "reserve_quote",
     ];
-    for (i, (_, topics, data)) in evs[..2].iter().enumerate() {
-        assert_eq!(topics, &[ScVal::U32(i as u32)]);
+    // XLM in through the XLM pool, USDC out of the USDC pool.
+    for ((_, topics, data), asset) in evs[..2].iter().zip([&s.xlm, &s.usdc]) {
+        let asset_val: ScVal = asset.try_into().unwrap();
+        assert_eq!(topics, &[asset_val]);
         let keys: std::vec::Vec<&str> = data.iter().map(|d| d.0.as_str()).collect();
         assert_eq!(keys, hop_keys);
+        // The fee rate is the curve at the dislocation the hop reports.
+        assert_eq!(
+            i128_of(&data[4].1),
+            fee_for_dislocation(i128_of(&data[2].1))
+        );
     }
-    // XLM in through pool 0, USDC out of pool 1; the last hop's reserves
-    // are the vault's reserves after the swap.
+    // Each hop carries its pool's reserves after the swap.
     let usdc_hop = &evs[1].2;
     assert_eq!(i128_of(&usdc_hop[1].1), out);
-    assert_eq!(i128_of(&usdc_hop[5].1), r.hitz_usdc);
-    assert_eq!(i128_of(&usdc_hop[6].1), r.usdc);
+    assert_eq!(i128_of(&usdc_hop[6].1), u.reserve);
+    assert_eq!(i128_of(&usdc_hop[7].1), u.hitz);
     let xlm_hop = &evs[0].2;
-    assert_eq!(i128_of(&xlm_hop[5].1), r.hitz_xlm);
-    assert_eq!(i128_of(&xlm_hop[6].1), r.xlm);
+    assert_eq!(i128_of(&xlm_hop[6].1), x.reserve);
+    assert_eq!(i128_of(&xlm_hop[7].1), x.hitz);
 
     let (_, topics, data) = &evs[2];
     let alice_val: ScVal = (&alice).try_into().unwrap();
@@ -307,32 +314,29 @@ fn swap_events_carry_what_the_guide_says() {
 }
 
 #[test]
-fn the_anchor_can_be_extrapolated_from_one_reading() {
+fn a_dislocation_decays_as_documented() {
     let s = setup();
     let alice = Address::generate(&s.env);
     StellarAssetClient::new(&s.env, &s.xlm).mint(&alice, &(100 * U));
     s.vault.swap(&alice, &alice, &s.xlm, &s.usdc, &(40 * U), &0);
 
     s.env.ledger().with_mut(|l| l.timestamp += 600);
-    let first = s.vault.market();
+    let first = s.vault.dislocation(&s.xlm, &s.usdc);
+    let first_fee = s.vault.pool(&s.usdc).fee;
     let dt = 3_000u64;
     s.env.ledger().with_mut(|l| l.timestamp += dt);
-    let later = s.vault.market();
+    let later = s.vault.dislocation(&s.xlm, &s.usdc);
 
-    // anchor(t + dt) = price + (anchor(t) - price) * e^(-dt / 7200)
-    let p = first.xlm_price as f64;
-    let predicted =
-        p + (first.anchor_price as f64 - p) * (-(dt as f64) / ANCHOR_TAU_SECS as f64).exp();
+    // dislocation(t + dt) = dislocation(t) * e^(-dt / 7200)
+    let predicted = first as f64 * (-(dt as f64) / ANCHOR_TAU_SECS as f64).exp();
     assert!(
-        (later.anchor_price as f64 - predicted).abs() <= 2.0,
-        "{} vs {predicted}",
-        later.anchor_price
+        (later as f64 - predicted).abs() <= predicted.abs() * 1e-6,
+        "{later} vs {predicted}"
     );
-    // And the small-trade fee is the curve at (price, anchor).
-    assert_eq!(
-        later.fee,
-        fee_for_price(later.xlm_price, later.anchor_price)
-    );
-    assert!(later.fee < first.fee && first.fee > 10_000_000);
-    assert_eq!(later.xlm_price, first.xlm_price);
+    // With two assets each pool's D is that pair, and the small-trade fee
+    // is the curve at it.
+    let pool = s.vault.pool(&s.usdc);
+    assert_eq!(pool.dislocation, later.abs());
+    assert_eq!(pool.fee, fee_for_dislocation(later));
+    assert!(pool.fee < first_fee && first_fee > 10_000_000);
 }

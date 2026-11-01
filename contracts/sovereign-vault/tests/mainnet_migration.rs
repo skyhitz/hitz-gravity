@@ -20,6 +20,7 @@ use gravity_token::GravityTokenClient;
 use soroban_sdk::{
     testutils::{Address as _, EnvTestConfig, Events as _, Ledger as _},
     token::{Client as TokenClient, StellarAssetClient},
+    vec,
     xdr::{ContractEventBody, ScVal},
     Address, BytesN, Env, String,
 };
@@ -145,7 +146,11 @@ fn mainnet_migration_keeps_s_and_l_and_ends_with_a_final_registry() {
         .address();
     let vault_id = env.register(
         SovereignVault,
-        (admin.clone(), token_id.clone(), xlm.clone(), usdc.clone()),
+        (
+            admin.clone(),
+            token_id.clone(),
+            vec![&env, xlm.clone(), usdc.clone()],
+        ),
     );
     let vault = SovereignVaultClient::new(&env, &vault_id);
     hitz.register_pool_address(&vault_id);
@@ -159,12 +164,11 @@ fn mainnet_migration_keeps_s_and_l_and_ends_with_a_final_registry() {
     let usdc_amt = backing_xlm * market / ONE * hitz_usdc / hitz_xlm;
     StellarAssetClient::new(&env, &xlm).mint(&admin, &backing_xlm);
     StellarAssetClient::new(&env, &usdc).mint(&admin, &usdc_amt);
-    vault.seed(&hitz_xlm, &backing_xlm, &hitz_usdc, &usdc_amt);
-    let m = vault.market();
-    assert!(
-        (m.xlm_price - market).abs() * 1_000 < market,
-        "seeded off market"
-    );
+    vault.seed(&xlm, &hitz_xlm, &backing_xlm);
+    vault.seed(&usdc, &hitz_usdc, &usdc_amt);
+    let rate = vault.rate(&xlm, &usdc);
+    assert!((rate - market).abs() * 1_000 < market, "seeded off market");
+    assert_eq!(vault.dislocation(&xlm, &usdc), 0);
     assert_eq!(hitz.total_mass(), wallet);
 
     // ── E. Final registry, then renounce ─────────────────────────
