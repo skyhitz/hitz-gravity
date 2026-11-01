@@ -43,7 +43,8 @@ fee = 1% × (XLM price after the trade ÷ anchor)^100     ratio taken ≥ 1, cap
   path, so there is no size threshold to slip under.
 - **Fee to the depleted side:** the fee is withheld from the output, so it stays
   in the reserve being drained (in a crash, the USDC pool keeps its USDC).
-- k never decreases in either pool. Rounding always favours the vault.
+- k never decreases in either pool. Rounding always favours the vault,
+  including the fee rate (the price ratio rounds up).
 
 All parameters are constants in `src/lib.rs` (`FEE_FLOOR`, `FEE_CAP`,
 `STEEPNESS`, `ANCHOR_TAU_SECS`, `ANCHOR_DECAY_PER_SEC`). Changing one takes a
@@ -51,23 +52,32 @@ timelocked upgrade.
 
 ### Why these numbers
 
-Ledger-level simulation (two pools at the Sep 22, 2026 state, XLM with jumps and
-microstructure noise, greedy arbitrage settling XLM at 0.05%). Against a flat 1%
-fee, the curve above earns:
+Backtested on the real thing: the arbitrage that ran on HITZ's two Aquarius
+pools calibrates a rational arbitrageur, which then trades each fee design on
+the real minute-by-minute XLM price from May 22 to Oct 31, 2026, starting
+from the pools' real reserves ([`research/vault-backtest`](../../research/vault-backtest)).
 
-| Market | Fees to the vault | Arbs keep |
-|---|---|---|
-| Crash month (XLM −50% drift) | +27% | −31% |
-| Pump month (XLM +60% drift) | +21% | −33% |
-| Volatile year (120% vol) | +6% | −44% |
-| Normal year (70% vol) | +3% | −30% |
-| Calm year (40% vol) | −9% | −20% |
+| May 22 to Oct 31 | Backing gained over holding | Taken by arbs | Avg price lag |
+|---|---|---|---|
+| Aquarius as it was (0.1%, pool kept half) | +$8.02 | $62.44 | 0.39% |
+| Flat 1% | +$44.79 | $19.44 | 1.21% |
+| **This curve** | **+$54.10** | **$13.37** | 2.37% |
+| This curve, 6 h memory | +$65.19 | $11.00 | 3.17% |
 
-A floor below 1% (0.1-0.3%) lost 15-40% of fees in every market: arbitrage
-trades on calm days too, and on-chain it pays the same fee as a swapper at the
-same moment. A longer anchor memory (3-6 h) earns another 5-10% but keeps
-swappers above 1% more often. Taking the fee on the output rather than the
-input changes the backing by less than 0.1%.
+Starting backing: $2,787.
+
+- About 6.7× what the Aquarius pools kept, with 79% less taken by arbitrage.
+- A 0.5% floor earns 19% less: arbitrage trades on calm days too and pays
+  the same fee a swapper pays at that moment.
+- Against flat 1%, the curve won $14 in the fast late-May pump and was within
+  ±$2.3 in every other month, slightly behind in both crash months.
+- A 3 h memory adds ~10% and 6 h ~20% to the gain, with the vault's price
+  further off the market.
+- At launch depth the curve also taxes ordinary purchases: a $20 HITZ buy
+  pays a ~9% fee with ~$2,800 of backing (AUDIT.md, V-1).
+
+Taking the fee on the output rather than the input changes the backing by
+less than 0.1%.
 
 ## Liquidity
 
@@ -121,5 +131,19 @@ keeps working; the token admin re-binds with `register_pool_address`.
 - `quote` equals `swap` in the same ledger.
 - The anchor is a true exponential average: updating more often doesn't move it faster.
 - Upgrades wait 7 days and must match the proposal; renounce ends them; trading carries on.
+- Swaps need exactly the trader's signature; deposits the depositor's; seeding,
+  upgrades and renounce the admin's.
+- The fee math reproduces fixed golden vectors, shared with the backtest's port.
 
 `cargo test -p sovereign-vault`
+
+The migration from the live mainnet token is rehearsed by
+`tests/mainnet_migration.rs` (needs the token's release Wasm; see
+[`MIGRATION.md`](MIGRATION.md)):
+
+```bash
+cargo build --target wasm32v1-none --release -p gravity-token
+cargo test -p sovereign-vault --features migration-rehearsal --test mainnet_migration
+```
+
+Security review and production checklist: [`AUDIT.md`](../../AUDIT.md).

@@ -28,9 +28,13 @@ For testnet history, see [`TESTNET.md`](./TESTNET.md).
 
 ```
 contracts/gravity-token/      Soroban SEP-41 contract (Rust, soroban-sdk 25)
+contracts/sovereign-vault/    HITZ's own exchange: HITZ/XLM + HITZ/USDC with a volatility fee
+research/vault-backtest/      The vault fee replayed on the real arbitrage history
 frontend/                     Next.js app + Cloudflare Worker gateway
+.github/workflows/contracts.yml  Tests, Wasm build + size check, mainnet migration rehearsal
 .github/workflows/release.yml Reproducible build → GitHub Release → Stellar Expert validation
 deploy.sh                     Initial mainnet deploy script (kept for history)
+AUDIT.md                      Security review of the vault and token v2, production checklist
 WHITEPAPER.md                 Canonical text of the Gravity model whitepaper
 LEGAL.md                      Protocol legal disclosure
 TESTNET.md                    V5 testnet deployment record
@@ -101,7 +105,9 @@ stellar contract invoke --id <CONTRACT_ID> --source <admin> --network mainnet \
 
 Upgrades are timelocked from the release that introduced the timelock on.
 Installing that release itself still uses the old one-step `upgrade` call.
-`renounce_admin` ends minting, upgrades and registry changes for good.
+`renounce_admin` ends minting, upgrades and registry changes for good. It
+refuses until the registry is final: no classic accounts registered as pools
+or routers, and every registered contract on its approved bytecode.
 
 After upgrade, Stellar Expert's `Source code` field on the contract
 page automatically links back to the validated commit. See the

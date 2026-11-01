@@ -102,7 +102,7 @@ another).
    to the vault's HITZ) and `safety_limit` (within ~0.1% of 9,924).
 5. Renounce: `renounce_admin` on the token and `renounce` on the vault,
    once the vault has run long enough that no fix is expected (see
-   AUDIT.md, finding V-3).
+   AUDIT.md, finding V-2).
 
 ## After the migration
 
