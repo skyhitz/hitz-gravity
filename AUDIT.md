@@ -1,6 +1,7 @@
 # Security review: Sovereign Vault and HITZ token v2
 
-Internal review of pull request #1 (`sovereign-vault`), Nov 1, 2026. It is
+Internal review of pull request #1 (`sovereign-vault`), Nov 1, 2026, updated
+for the multi-asset vault (trusted assets listed without new code). It is
 not a substitute for an independent audit (see P-3), but every finding below
 was checked against code, tests, or live mainnet state, and the fixed ones
 have tests that fail on the code as it was before.
@@ -10,9 +11,9 @@ have tests that fail on the code as it was before.
 | Component | What was reviewed |
 |---|---|
 | `contracts/gravity-token` | The diff from mainnet v1.0.0: fail-soft integrity, 7-day upgrade timelock, `renounce_admin` |
-| `contracts/sovereign-vault` | All of it: swap and fee math, anchor, deposits, seeding, upgrade, renounce |
+| `contracts/sovereign-vault` | All of it: swap and fee math, per-pool deviations, listing, deposits, seeding, upgrade, renounce |
 | Upgrade path | The live mainnet bytecode (`befa64d9…`, 22,310 bytes) upgraded to this build |
-| Economics | The fee replayed on the real XLM path and calibrated to the real arbitrage history |
+| Economics | The fee replayed on the real XLM path and calibrated to the real arbitrage history, then with a third asset on the real EUR path |
 | Release and CI | `release-sovereign-vault.yml`, Wasm build, contract size |
 
 Mainnet facts used here were read from the ledger on Nov 1, 2026: total
@@ -30,7 +31,8 @@ and the upgrade from the live bytecode keeps all state.
 The real risks are in what happens around the code: who keeps privileges
 after renouncing (T-1, T-2), what can still change instantly before
 renouncing (T-3), how the fee treats ordinary buyers while the vault is
-small (V-1), and that a bug could not be paused (V-2).
+small (V-1), that a bug could not be paused (V-2), and which assets get
+listed (V-11).
 
 | ID | Severity | Finding | Status |
 |---|---|---|---|
@@ -40,6 +42,7 @@ small (V-1), and that a bug could not be paused (V-2).
 | V-1 | Medium | At launch depth, ordinary swaps pay most of the exponential fee | Open: needs a product decision |
 | V-2 | Medium | No pause: a bug stays live through the 7-day upgrade window | Open: needs a product decision |
 | V-3 | Medium | Vault admin can't be rotated; multisig is only documented | Open |
+| V-11 | Medium | A listed asset that goes bad can take its pool's HITZ | Open: listing criteria and seed size |
 | P-1 | Medium | No CI ran the contract tests; Wasm build and size never checked | Fixed: `.github/workflows/contracts.yml` |
 | P-2 | Medium | The fee study couldn't be reproduced | Fixed: `research/vault-backtest` |
 | T-4 | Low | Registry entries archived every ~120 days despite daily use | Fixed: bumped on use |
@@ -47,8 +50,9 @@ small (V-1), and that a bug could not be paused (V-2).
 | V-4 | Low | The fee ratio rounded down (against the vault) | Fixed: rounds up |
 | V-5 | Low | Tokens sent straight to the vault are stranded | Open: optional `sync` |
 | V-6 | Low | Authorization was never tested (all tests mock auth) | Fixed: three auth tests |
+| V-14 | Low | `renounce` would have ended listing along with upgrades | Fixed: `renounce_upgrades` |
 | P-3 | Info | No independent audit yet | Open |
-| T-5, V-7…V-10 | Info | Verified properties and accepted risks | See below |
+| T-5, V-7…V-10, V-12, V-13 | Info | Verified properties and accepted risks | See below |
 
 ## Token findings
 
@@ -146,19 +150,19 @@ reads approve data, and mainnet has never emitted an approve event.
 
 ### V-1 (Medium, open) Ordinary swaps pay most of the exponential fee at launch depth
 
-The fee is priced on the XLM cross-rate a trade leaves behind. Any trade that
-moves the cross-rate pays it, including a plain HITZ purchase, and the
-arbitrage that moves it back pays close to the floor. With the vault seeded
-from the Aquarius liquidity (about $2,800 of XLM + USDC), a $20 HITZ purchase
-moves the cross-rate about 2%:
+The fee is priced on the dislocation a trade leaves behind. Any trade that
+moves one pool against the others pays it, including a plain HITZ purchase,
+and the arbitrage that moves it back pays close to the floor. With the vault
+seeded from the Aquarius liquidity (about $2,800 of XLM + USDC), a $20 HITZ
+purchase moves the XLM/USDC rate about 2%:
 
 | XLM → HITZ, all-in cost | $5 | $20 | $100 |
 |---|---|---|---|
 | Aquarius today (0.1%) | 0.37% | 1.17% | 5.24% |
 | Flat 1% | 1.27% | 2.06% | 6.10% |
-| Proposal, k=50 | 1.58% | 3.99% | 14.63% |
-| Proposal, k=100 | **1.99%** | **9.64%** | **14.63%** |
-| Proposal, k=100, at 10× depth (~$28k) | 1.08% | 1.35% | 3.48% |
+| Dislocation fee, k=50 | 1.58% | 3.99% | 14.63% |
+| Dislocation fee, k=100 (contract) | **1.99%** | **9.64%** | **14.63%** |
+| Dislocation fee, k=100, at 10× depth (~$28k) | 1.08% | 1.35% | 3.48% |
 
 (`research/vault-backtest/results/retail.md`.) The curve is tuned for a much
 deeper vault. Options, in order of preference:
@@ -181,10 +185,12 @@ second is defensible, but decide it explicitly.
 
 ### V-3 (Medium, open) The vault admin can't be rotated
 
-There is no `set_admin`. A compromised key can propose an upgrade, and only
-the same key can cancel it. The README says the admin is a multisig, but
-nothing enforces it. Use a Stellar multisig account with a high threshold
-from deployment; add a two-step rotation if `renounce` is far off.
+There is no `set_admin`. A compromised key can propose an upgrade or a
+listing, and only the same key can cancel it. The README says the admin is a
+multisig, but nothing enforces it. Use a Stellar multisig account with a high
+threshold from deployment: its signers can be rotated at the account level
+without changing the admin address. That matters more now that the admin
+may keep the listing power for years after `renounce_upgrades` (V-14).
 
 ### V-4 (Low, fixed) The fee ratio rounded against the vault
 
@@ -211,9 +217,11 @@ all of them fail with no signature. Removing `from.require_auth()` from
 
 ### V-7 (Info, accepted) External dependencies
 
-Circle can freeze the vault's USDC balance; the USDC pool and XLM↔USDC route
-would stop while HITZ↔XLM keeps working. The vault calls only the three token
-contracts, so no other contract can halt it.
+Circle can freeze the vault's USDC balance; every swap through the USDC pool
+would stop while the other pools keep trading with each other and with HITZ.
+Any listed asset's issuer has the same power over its own pool. A swap calls
+only the HITZ contract and the contracts of the assets it trades, so no other
+contract can halt it.
 
 ### V-8 (Info) Arbitrage costs 10× what it did, through a new interface
 
@@ -231,8 +239,15 @@ would have cleared the new fee at the time. They will trade larger gaps
 - Overflow: the HITZ cap bounds every product (dumping the whole supply
   moves the XLM pool's XLM reserve by ~42% at today's k), and any overflow
   reverts.
-- `quote` equals `swap` in the same ledger; the anchor is an exact
-  exponential average however often it updates; deposits keep the price.
+- `quote` equals `swap` in the same ledger; deviations decay as an exact
+  exponential however often they update; deposits keep the price.
+- The fee is route-independent: a hop's fee depends only on its own pool and
+  the pools it references, so splitting an asset-to-asset swap into single
+  hops gives exactly the same output and a detour through a third asset only
+  adds hops. Pair dislocations are consistent (the dislocation of A/C is that
+  of A/B plus B/C), and a HITZ move shown by every pool dislocates nothing.
+- A newly seeded pool starts at the HITZ-weighted average deviation, so a
+  recent HITZ move isn't read as a dislocation of the new asset.
 - `tests/mainnet_migration.rs` and the golden vectors pin the math across
   the contract and the backtest port.
 
@@ -242,15 +257,78 @@ S ≈ 98.5M HITZ gives L ≈ 9,924 HITZ, roughly $0.31 at today's price. Nearly
 every buyer is vaulted and can only sell back into the vault. That is the
 Gravity model, but the swap UI has to say it before anyone buys.
 
+### V-11 (Medium, open) A listed asset that goes bad can take its pool's HITZ
+
+Every listed asset is trusted with the HITZ in its pool. If its contract
+mints unbacked units (a hack, a broken bridge, a compromised issuer), those
+units can be sold into its pool for that pool's HITZ, and the HITZ then sold
+into every other pool for real assets. The fee slows this (it climbs to 10%
+as the asset dislocates) but doesn't stop it. The loss is about the bad
+pool's share of the vault's HITZ, taken out of the other pools' backing: a
+pool seeded with a tenth of the HITZ exposes about a tenth of the rest.
+Fee-on-transfer, rebasing and clawback lose the asset's own reserve instead:
+the vault books the amount it asked for, not what arrived, and never re-reads
+its balance.
+
+Already in place: listings are public for 7 days; HITZ, duplicates and a
+17th asset are refused; a pool affects other pools' fees only if it holds at
+least 1/8 of their HITZ; a frozen asset stops only its own pool.
+
+Before each listing:
+
+1. Trust the issuer and the contract with the pool's HITZ. For a classic
+   asset, read the issuer's flags (`AUTH_REVOCABLE`, `AUTH_CLAWBACK_ENABLED`)
+   and policy; for a Soroban token, who can upgrade it.
+2. Transfers must move exactly the amount asked: no transfer fees, no
+   rebasing.
+3. Size the seed to the trust: a newer or riskier asset gets a smaller share
+   of the HITZ.
+4. Run `MIGRATION.md`'s listing steps, and keep the listing power with the
+   multisig until the asset list is final.
+
+### V-12 (Info, accepted) A dislocated asset raises the fees of every pool that references it
+
+A hop pays for its asset's most dislocated pair, not the pair being traded.
+While XLM is dislocated, a USDC→EURC swap pays for XLM's dislocation, just as
+a USDC→HITZ purchase already does with two assets. This is what makes the fee
+route-independent. Pricing only the traded pair would leak: the fee is
+convex, so a detour through an asset halfway between the two pays for two
+half-size dislocations instead of one full one. With the contract's own math
+such a detour would pay out up to 11.9% more than the direct swap; with
+worst-pair pricing every detour costs at least 1.96% more
+(`research/vault-backtest/detours.py`). A calm asset adds nothing: see the
+three-asset backtest under Economic validation.
+
+### V-13 (Info, verified) The cost of a swap grows with the listed assets
+
+A hop reads every pool to find its asset's worst pair. On the release Wasm,
+the worst-case asset-to-asset swap costs 3.4M instructions with two assets
+and 10.1M with all 16 (the cap, `MAX_ASSETS`), against a network limit of
+100M or more; memory stays at 1.5 MB, and the resource fee goes from ~0.013
+to ~0.015 XLM. `tests/release_budget.rs` measures it in CI. Going past 16
+assets takes an upgrade, so 16 is final once the code is frozen.
+
+### V-14 (Low, fixed) Renouncing would have ended listing
+
+The vault's admin had one exit, `renounce`, which also ended listing. The
+runbook renounces the vault once no fix is expected, so the team would have
+had to choose between an immutable vault and adding trusted assets later.
+`renounce_upgrades` now freezes the code for good and keeps the timelocked
+listing; `renounce` still ends everything. `upgradable()` reports which.
+Test: `renouncing_upgrades_freezes_the_code_and_keeps_listing`; the migration
+rehearsal lists a third asset after freezing the code on the renounced token.
+
 ## Process findings
 
 - **P-1 (fixed)** `.github/workflows/contracts.yml` runs the tests, builds the
   release Wasm and checks it against the 128 KiB mainnet limit (token 55.7 KB
-  and vault 40.1 KB unoptimized), runs the mainnet migration rehearsal, and
-  fails if test snapshots weren't committed.
+  and vault 53.0 KB unoptimized), runs the mainnet migration rehearsal and the
+  16-asset swap budget on the release Wasm, and fails if test snapshots
+  weren't committed.
 - **P-2 (fixed)** `research/vault-backtest` holds the data fetcher, an exact
-  Python port of the vault math (checked against the contract's golden
-  vectors), the calibrated arbitrage simulator and the results.
+  Python port of the vault math for any number of assets (checked against the
+  contract's golden vectors), the calibrated arbitrage simulator, the detour
+  experiment and the results.
 - **P-3 (open)** Get an independent audit of both contracts and the
   migration before mainnet.
 
@@ -261,31 +339,43 @@ the two Aquarius pools from May 22 to Oct 2 (3,031 cycles, $7,503 volume,
 $52.78 taken from the pools against the Binance price) was used to calibrate
 a rational arbitrageur. Every fee design was then replayed on the real
 minute-by-minute XLM price from May 22 to Oct 31, starting from the real
-reserves, with the vault's exact integer math.
+reserves, with the vault's exact integer math, and again with a third asset
+(EURC) on the real EUR/USD price.
 
 | From May 22 to Oct 31 | Gain over holding | vs Aquarius | Arb txs | Taken by arbs | Avg price lag |
 |---|---|---|---|---|---|
 | Aquarius history (0.1%, pool kept half) | +$8.02 | | 3,274 | $62.44 | 0.39% |
 | Flat 1% | +$44.79 | +$36.77 | 959 | $19.44 | 1.21% |
-| **Proposal (1%, k=100, 2h)** | **+$54.10** | **+$46.08** | 1,539 | **$13.37** | 2.37% |
-| Proposal, 6h memory | +$65.19 | +$57.18 | 1,238 | $11.00 | 3.17% |
-| Proposal, 0.5% floor | +$43.99 | +$35.97 | 1,826 | $17.34 | 1.44% |
+| **Contract (1%, k=100, 2h)** | **+$54.15** | **+$46.14** | 1,535 | **$13.35** | 2.37% |
+| Contract, 6h memory | +$65.26 | +$57.24 | 1,237 | $11.05 | 3.17% |
+| Contract, 0.5% floor | +$44.08 | +$36.06 | 1,823 | $17.35 | 1.44% |
 
 Starting backing $2,787; holding it untouched ends at $3,047.
 
-- **The design is right in direction.** It earns about 6.7× what the
-  Aquarius setup kept, and arbitrage takes 79% less. The result holds with
+- **The design is right in direction.** It earns about 6.8× what the
+  Aquarius setup kept, and arbitrage takes 79% less. The multi-asset
+  rewrite (log-space averages per pool) changes nothing with two assets: the
+  arithmetic average of the XLM price it replaced gained +$54.10. The result holds with
   pickier arbitrageurs (1-3¢ minimum profit), more competitive ones (0.1%
   hedge cost), and intra-minute price swings.
 - **The 1% floor is right.** The same curve with a 0.5% floor earns 19% less,
   and flat fees below 1% earn less still (flat 0.3%: half as much).
 - **The exponential part wins in fast shocks, not in every shock.** Against
-  flat 1% it gained $14.2 in the sharp late-May pump, tied in the calm months
+  flat 1% it gained $14.4 in the sharp late-May pump, tied in the calm months
   and the September pump, and lost about $2.3 in each of the June and October
   crashes. The earlier synthetic study's "+27% in crash months" did not show
   up in the two real crash months.
-- **Longer memory earns more but lags more.** 6 hours adds ~20% to the gain
+- **Longer memory earns more but lags more.** 6 hours adds ~21% to the gain
   over holding, with the vault's price 3.2% off the market on average.
+- **A calm third asset changes nothing for the others.** With EURC listed
+  next to XLM and USDC on the real EUR/USD path (seeded with as much HITZ as
+  the USDC pool), the vault gained +$75.74 over holding on $3,887 of backing,
+  against +$61.18 for flat 1% and +$8.64 for Aquarius-style pools; that is
+  1.9% of the starting backing, as with two assets. The XLM/USDC small-swap
+  fee averaged 2.48% (2.46% without EURC) and the XLM price lag 2.39% (2.37%).
+  The spillover shows: a USDC↔EURC swap paid 2.45% on average, near the XLM
+  pairs, because both pools reference XLM (V-12). Arbitrage never traded that
+  pair.
 - **It depends on arbitrageurs integrating.** Without them the vault's price
   goes stale, though the fee then protects it: a vault reopened with a 31%
   stale gap gave up $2.56 over three days, where an Aquarius-style pool gives
@@ -295,23 +385,29 @@ Starting backing $2,787; holding it untouched ends at $3,047.
 
 ### Contracts
 
-- [x] Unit tests: 96 token, 25 vault (`cargo test --workspace`)
+- [x] Unit tests: 97 token, 43 vault, 5 integration (`cargo test --workspace`)
 - [x] Release Wasm builds; under the 128 KiB limit
-- [x] Upgrade from the live mainnet bytecode rehearsed; state preserved
+- [x] Upgrade from the live mainnet bytecode rehearsed; state preserved; a
+      third asset listed after the code is frozen
 - [x] Authorization tested; golden vectors tie the backtest to the contract
 - [x] `renounce_admin` refuses a non-final registry (T-1, T-2)
+- [x] A swap with all 16 assets listed fits the network limits (V-13)
 - [ ] Decide the launch fee steepness or depth gate (V-1)
-- [ ] Decide on a pause guardian and the renounce date (V-2)
+- [ ] Decide on a pause guardian and the date for `renounce_upgrades` (V-2)
 - [ ] Vault admin and token admin as high-threshold multisig accounts (T-3, V-3)
+- [ ] Write down the listing criteria and seed sizing before the first
+      listing (V-11)
 - [ ] Independent audit of both contracts and the migration (P-3)
 - [ ] Tag `vX.Y.Z` and `sovereign-vault-vX.Y.Z`; confirm Stellar Expert validates both
-- [ ] Measure swap resource fees on testnet; confirm arbitrage still pays at real gas
+- [ ] Confirm swap resource fees on testnet (~0.013 XLM measured in tests);
+      confirm arbitrage still pays at real gas
 
 ### Migration (`contracts/sovereign-vault/MIGRATION.md`)
 
 - [ ] Testnet run of steps A-E with real Aquarius contracts
 - [ ] Remove the Aquarius pools before anything lets HITZ out of them (stale 27% gap)
-- [ ] Seed at the market cross-rate; check `market()` (price within 0.1%, fee 1%)
+- [ ] Seed at the market cross-rate; check `rate(XLM, USDC)` within 0.1%,
+      `dislocation` zero and a 1% fee in `pools()`
 - [ ] Finish or move the reparation campaign, then remove the sponsor router
 - [ ] Prune the registry to the vault; renounce passes its guard
 
@@ -337,5 +433,5 @@ Starting backing $2,787; holding it untouched ends at $3,047.
 
 - [ ] Ingest vault events; move the price and liquidity cards to the vault
 - [ ] Alerts: `integrity_drift_event`; `upgrade_proposed` on both contracts;
-      registry and admin changes; no HITZ or vault events for 24 hours (the
-      Oct 2 outage went unnoticed for 17 days)
+      `listing_proposed` on the vault; registry and admin changes; no HITZ or
+      vault events for 24 hours (the Oct 2 outage went unnoticed for 17 days)

@@ -28,10 +28,10 @@ For testnet history, see [`TESTNET.md`](./TESTNET.md).
 
 ```
 contracts/gravity-token/      Soroban SEP-41 contract (Rust, soroban-sdk 25)
-contracts/sovereign-vault/    HITZ's own exchange: HITZ/XLM + HITZ/USDC with a volatility fee
+contracts/sovereign-vault/    HITZ's own exchange: a pool per trusted asset (XLM, USDC, more later), dislocation fee
 research/vault-backtest/      The vault fee replayed on the real arbitrage history
 frontend/                     Next.js app + Cloudflare Worker gateway
-.github/workflows/contracts.yml  Tests, Wasm build + size check, mainnet migration rehearsal
+.github/workflows/contracts.yml  Tests, Wasm build + size check, mainnet migration rehearsal, swap budget
 .github/workflows/release.yml Reproducible build → GitHub Release → Stellar Expert validation
 deploy.sh                     Initial mainnet deploy script (kept for history)
 AUDIT.md                      Security review of the vault and token v2, production checklist
