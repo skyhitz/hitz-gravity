@@ -4,9 +4,9 @@ extern crate std;
 use super::*;
 use gravity_token::{GravityToken, GravityTokenClient};
 use soroban_sdk::{
-    testutils::{Address as _, Ledger as _},
+    testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation, Ledger as _},
     token::{Client as TokenClient, StellarAssetClient},
-    Address, Env, String,
+    Address, Env, IntoVal, String, Symbol,
 };
 
 /// One unit of any 7-decimal Stellar asset (HITZ, XLM, USDC).
@@ -677,4 +677,281 @@ fn renouncing_before_seeding_leaves_an_empty_vault() {
             .try_seed(&SEED_HITZ_XLM, &SEED_XLM, &SEED_HITZ_USDC, &SEED_USDC),
         Err(Ok(ce(Error::Renounced)))
     );
+}
+
+// ─────────────────────────────────────────────────────────────
+//  AUTHORIZATION (the tests above mock every signature)
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn swaps_need_exactly_the_traders_signature() {
+    let w = World::new();
+    let alice = w.user(0, 100 * U, 0);
+    let bob = Address::generate(&w.env);
+    w.vault.swap(&alice, &bob, &w.xlm, &w.usdc, &(10 * U), &0);
+    // Alice signs the swap with all its terms (recipient, pair, size,
+    // minimum out) and the one transfer it pulls from her. The payout to
+    // Bob needs nobody's signature but the vault's own.
+    assert_eq!(
+        w.env.auths(),
+        std::vec![(
+            alice.clone(),
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    w.vault.address.clone(),
+                    Symbol::new(&w.env, "swap"),
+                    (
+                        alice.clone(),
+                        bob.clone(),
+                        w.xlm.clone(),
+                        w.usdc.clone(),
+                        10 * U,
+                        0i128
+                    )
+                        .into_val(&w.env),
+                )),
+                sub_invocations: std::vec![AuthorizedInvocation {
+                    function: AuthorizedFunction::Contract((
+                        w.xlm.clone(),
+                        Symbol::new(&w.env, "transfer"),
+                        (alice.clone(), w.vault.address.clone(), 10 * U).into_val(&w.env),
+                    )),
+                    sub_invocations: std::vec![],
+                }],
+            }
+        )]
+    );
+
+    // Without her signature nothing moves.
+    w.env.set_auths(&[]);
+    assert!(w
+        .vault
+        .try_swap(&alice, &alice, &w.xlm, &w.usdc, &U, &0)
+        .is_err());
+    assert!(w.vault.try_deposit(&alice, &XLM_POOL, &U, &0, &U).is_err());
+}
+
+#[test]
+fn deposits_need_the_depositors_signature() {
+    let w = World::new();
+    let fan = w.user(1_000 * U, 10 * U, 0);
+    w.vault
+        .deposit(&fan, &XLM_POOL, &(1_000 * U), &0, &(10 * U));
+    let auths = w.env.auths();
+    assert_eq!(auths.len(), 1);
+    assert_eq!(auths[0].0, fan);
+}
+
+#[test]
+fn admin_actions_need_the_admins_signature() {
+    let hash_of = |w: &World| w.env.deployer().upload_contract_wasm(OTHER_WASM);
+    let signer = |w: &World| {
+        let a = w.env.auths();
+        assert_eq!(a.len(), 1);
+        a[0].0.clone()
+    };
+
+    let w = World::unseeded();
+    w.vault
+        .seed(&SEED_HITZ_XLM, &SEED_XLM, &SEED_HITZ_USDC, &SEED_USDC);
+    assert_eq!(signer(&w), w.admin);
+    let hash = hash_of(&w);
+    w.vault.propose_upgrade(&hash);
+    assert_eq!(signer(&w), w.admin);
+    w.vault.cancel_upgrade();
+    assert_eq!(signer(&w), w.admin);
+    w.vault.renounce();
+    assert_eq!(signer(&w), w.admin);
+
+    // Nobody else's signature is enough.
+    let w = World::unseeded();
+    let hash = hash_of(&w);
+    w.env.set_auths(&[]);
+    assert!(w
+        .vault
+        .try_seed(&SEED_HITZ_XLM, &SEED_XLM, &SEED_HITZ_USDC, &SEED_USDC)
+        .is_err());
+    assert!(w.vault.try_propose_upgrade(&hash).is_err());
+    assert!(w.vault.try_renounce().is_err());
+    assert_eq!(w.vault.admin(), Some(w.admin.clone()));
+}
+
+// ─────────────────────────────────────────────────────────────
+//  GOLDEN VECTORS (shared with research/vault-backtest)
+// ─────────────────────────────────────────────────────────────
+
+/// A fixed trade sequence on reserves shaped like the live Aquarius pools.
+/// Each row: amount out, the four reserves, then `market()` (XLM price,
+/// anchor, fee). Any change to the swap or fee math changes these numbers,
+/// and research/vault-backtest/vaultmath.py must reproduce them exactly
+/// (`python3 research/vault-backtest/vaultmath.py --check`).
+#[test]
+fn fee_math_matches_the_golden_vectors() {
+    let w = World::unseeded();
+    let (hx, x, hu, u) = (
+        576_979_786_994_794,
+        108_590_621_387,
+        307_270_480_999_958,
+        12_733_312_293,
+    );
+    // The world pre-mints the default seed; top up what these reserves need.
+    assert!(hx + hu <= SEED_HITZ_XLM + SEED_HITZ_USDC);
+    StellarAssetClient::new(&w.env, &w.xlm).mint(&w.admin, &(x - SEED_XLM));
+    StellarAssetClient::new(&w.env, &w.usdc).mint(&w.admin, &(u - SEED_USDC));
+    w.vault.seed(&hx, &x, &hu, &u);
+    let t = w.user(10_000_000 * U, 100_000 * U, 100_000 * U);
+    let (h, xl, us) = (w.hitz_addr(), w.xlm.clone(), w.usdc.clone());
+    let steps: [(u64, &Address, &Address, i128); 12] = [
+        (0, &xl, &us, 50 * U),
+        (300, &us, &xl, 10 * U),
+        (3_600, &xl, &h, 100 * U),
+        (0, &h, &us, 1_000_000 * U),
+        (7_200, &us, &h, 5 * U),
+        (86_400, &xl, &us, 500 * U),
+        (5, &xl, &us, 3 * U + 1_234),
+        (1_800, &us, &xl, 40 * U),
+        (17, &us, &xl, 7 * U),
+        (100_000, &h, &xl, 3_000_000 * U),
+        (61, &xl, &us, U),
+        (3, &us, &xl, 123_456_789),
+    ];
+    let expected: [[i128; 8]; 12] = [
+        [
+            95_357_378,
+            574_401_566_309_723,
+            109_090_621_387,
+            309_848_701_685_029,
+            12_637_954_915,
+            214_760_952,
+            220_185_558,
+            100_000_000,
+        ],
+        [
+            445_114_018,
+            576_778_952_628_527,
+            108_645_507_369,
+            307_471_315_366_225,
+            12_737_954_915,
+            219_934_182,
+            219_964_176,
+            10_137_302,
+        ],
+        [
+            4_928_942_487_090,
+            571_850_010_141_437,
+            109_645_507_369,
+            307_471_315_366_225,
+            12_737_954_915,
+            216_065_980,
+            219_952_374,
+            59_460_177,
+        ],
+        [
+            361_108_511,
+            571_850_010_141_437,
+            109_645_507_369,
+            317_471_315_366_225,
+            12_376_846_404,
+            203_327_818,
+            219_952_374,
+            100_000_000,
+        ],
+        [
+            1_166_910_435_081,
+            571_850_010_141_437,
+            109_645_507_369,
+            316_304_404_931_144,
+            12_426_846_404,
+            204_902_370,
+            209_443_648,
+            89_540_845,
+        ],
+        [
+            741_073_549,
+            549_404_080_033_126,
+            114_645_507_369,
+            338_750_335_039_455,
+            11_685_772_855,
+            165_315_108,
+            204_902_397,
+            100_000_000,
+        ],
+        [
+            4_014_738,
+            549_274_719_191_306,
+            114_675_508_603,
+            338_879_695_881_275,
+            11_681_758_117,
+            165_113_124,
+            204_874_915,
+            100_000_000,
+        ],
+        [
+            1_863_074_107,
+            559_372_313_377_171,
+            112_812_434_496,
+            328_782_101_695_410,
+            12_081_758_117,
+            182_207_380,
+            196_079_636,
+            100_000_000,
+        ],
+        [
+            308_451_382,
+            561_076_862_810_049,
+            112_503_983_114,
+            327_077_552_262_532,
+            12_151_758_117,
+            185_286_099,
+            196_046_920,
+            100_000_000,
+        ],
+        [
+            5_139_107_508,
+            591_076_862_810_049,
+            107_364_875_606,
+            327_077_552_262_532,
+            12_151_758_117,
+            204_536_166,
+            185_286_108,
+            100_000_000,
+        ],
+        [
+            1_656_337,
+            591_027_319_639_590,
+            107_374_875_606,
+            327_127_095_432_991,
+            12_150_101_780,
+            204_441_133,
+            185_448_510,
+            100_000_000,
+        ],
+        [
+            481_804_063,
+            593_988_763_503_894,
+            106_893_071_543,
+            324_165_651_568_687,
+            12_273_558_569,
+            210_393_431,
+            185_456_422,
+            100_000_000,
+        ],
+    ];
+    for ((dt, tin, tout, amt), want) in steps.iter().zip(expected.iter()) {
+        w.advance(*dt);
+        let out = w.swap(&t, tin, tout, *amt);
+        let r = w.vault.reserves();
+        let m = w.vault.market();
+        let got = [
+            out,
+            r.hitz_xlm,
+            r.xlm,
+            r.hitz_usdc,
+            r.usdc,
+            m.xlm_price,
+            m.anchor_price,
+            m.fee,
+        ];
+        assert_eq!(&got, want);
+    }
 }

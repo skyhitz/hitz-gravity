@@ -696,13 +696,15 @@ fn anchor_now(env: &Env, r: &Reserves) -> i128 {
 }
 
 /// FEE_FLOOR × (price / anchor)^STEEPNESS with the ratio taken ≥ 1,
-/// capped at FEE_CAP.
+/// capped at FEE_CAP. The ratio rounds up, so the fee never rounds below
+/// the curve.
 pub fn fee_for_price(price: i128, anchor: i128) -> i128 {
-    let ratio = if price >= anchor {
-        price * ONE / anchor
+    let (num, den) = if price >= anchor {
+        (price, anchor)
     } else {
-        anchor * ONE / price
+        (anchor, price)
     };
+    let ratio = (num * ONE + den - 1) / den;
     let multiplier = pow_sat(ratio, STEEPNESS, FEE_CAP * ONE / FEE_FLOOR);
     let fee = FEE_FLOOR * multiplier / ONE;
     if fee > FEE_CAP {
