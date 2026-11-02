@@ -78,14 +78,18 @@ accept the new ones before this step.
 ### D. Deploy, register and seed the vault
 
 1. Deploy the vault from the `sovereign-vault-v*` release WASM with
-   `(admin, HITZ, XLM SAC, USDC SAC)`. The vault admin should be a Stellar
-   multisig account.
+   `(admin, HITZ, [XLM SAC, USDC SAC])`. The vault admin should be a Stellar
+   multisig account. `seed` pulls the tokens from the vault admin, so the
+   simplest is to make the admin wallet (`GCAETBNB…`) that multisig: its
+   HITZ goes straight from one registered pool to another. Moving it to a
+   different account first takes it out of S until it is seeded.
 2. `register_pool_address(vault)` on the token **before** seeding.
-3. `seed(hitz_xlm, xlm, hitz_usdc, usdc)` from the admin wallet, with the
-   amounts chosen so the vault's XLM price (`(usdc / hitz_usdc) / (xlm /
-   hitz_xlm)`) equals the market XLM/USDC price at that moment. Check
-   `market()` right after: `xlm_price` within 0.1% of the market and `fee`
-   at 1%.
+3. From the vault admin, `seed(XLM SAC, hitz_xlm, xlm)` then
+   `seed(USDC SAC, hitz_usdc, usdc)`, with the amounts chosen so the vault's
+   XLM price (`(usdc / hitz_usdc) / (xlm / hitz_xlm)`) equals the market
+   XLM/USDC price at that moment. Check right after: `rate(XLM, USDC)` within
+   0.1% of the market, `dislocation(XLM, USDC)` zero, and `pools()` showing a
+   1% fee for both.
 
 S does not change in this step (HITZ moves from one registered pool to
 another).
@@ -105,13 +109,43 @@ another).
    contract keeps its exemption even if its owner later changes its code.
 4. Check `list_pools` (the vault only), `list_routers`, `total_mass` (equal
    to the vault's HITZ) and `safety_limit` (within ~0.1% of 9,924).
-5. Renounce: `renounce_admin` on the token and `renounce` on the vault,
-   once the vault has run long enough that no fix is expected (see
-   AUDIT.md, finding V-2).
+5. Renounce: `renounce_admin` on the token. On the vault,
+   `renounce_upgrades` once it has run long enough that no fix is expected
+   (see AUDIT.md, finding V-2): the code is then final, and the multisig keeps
+   only the timelocked listing of new trusted assets. `renounce` ends that
+   too; run it once the asset list is final.
 
 ## After the migration
 
-- Ingest vault events (`swap`, `hop`, `deposit`) and point the price and
-  liquidity cards at the vault instead of the Aquarius pools.
-- Monitor `integrity_drift_event`, `upgrade_proposed` on both contracts,
-  and silence (no HITZ events for 24 h).
+- Ingest vault events (`swap`, `hop`, `deposit`, `seeded`, `listed`) and
+  point the price and liquidity cards at the vault instead of the Aquarius
+  pools.
+- Monitor `integrity_drift_event` and `upgrade_proposed` on both
+  contracts, `listing_proposed` on the vault, and silence (no HITZ events
+  for 24 h).
+
+## Listing a trusted asset later
+
+No code changes and nothing on the token: the vault stays one registered
+pool.
+
+1. Check the asset against the listing criteria in AUDIT.md (V-11): who can
+   mint it, freeze or claw back the vault's balance, or change its contract,
+   and whether its transfers move exactly the amount asked.
+2. `propose_listing(asset)` on the vault and announce it. Integrators see
+   `listing_proposed`; anyone can object during the 7 days.
+   `cancel_listing()` if something comes up.
+3. After 7 days, `list_asset(asset)`: an empty pool, outside trading and
+   fees until seeded.
+4. `seed(asset, hitz, amount)` from the vault admin at the market price:
+   `amount / hitz` is the asset per HITZ, so `rate(asset, USDC)` must land
+   within 0.1% of the asset's market price in USDC. Check `pools()` right
+   after.
+
+How much HITZ to seed is the main decision. It sets the new pool's depth,
+whether it counts as a reference for the other pools (at least 1/8 of their
+HITZ), and the most the vault can lose if the asset goes bad (V-11). After
+step E the admin wallet is an ordinary account: holding more than L, it is
+vaulted, which still lets it seed (seeding sends HITZ to the vault). Keep the
+HITZ for future seeds there, or buy it from the vault when needed; the
+migration rehearsal does the latter.

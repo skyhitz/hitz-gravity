@@ -14,16 +14,18 @@
 //!   C. one-step `upgrade` to the new token code
 //!   D. deploy + register the vault, seed it at the market cross-rate
 //!   E. prune the registry to the vault and renounce
+//!   later: freeze the vault's code and list a third trusted asset
 #![cfg(feature = "migration-rehearsal")]
 
 use gravity_token::GravityTokenClient;
 use soroban_sdk::{
     testutils::{Address as _, EnvTestConfig, Events as _, Ledger as _},
     token::{Client as TokenClient, StellarAssetClient},
+    vec,
     xdr::{ContractEventBody, ScVal},
     Address, BytesN, Env, String,
 };
-use sovereign_vault::{SovereignVault, SovereignVaultClient, ONE};
+use sovereign_vault::{SovereignVault, SovereignVaultClient, ONE, UPGRADE_DELAY_SECS};
 
 const MAINNET_TOKEN: &[u8] =
     include_bytes!("../../gravity-token/test_fixtures/gravity_token_mainnet_v1.0.0.wasm");
@@ -145,7 +147,11 @@ fn mainnet_migration_keeps_s_and_l_and_ends_with_a_final_registry() {
         .address();
     let vault_id = env.register(
         SovereignVault,
-        (admin.clone(), token_id.clone(), xlm.clone(), usdc.clone()),
+        (
+            admin.clone(),
+            token_id.clone(),
+            vec![&env, xlm.clone(), usdc.clone()],
+        ),
     );
     let vault = SovereignVaultClient::new(&env, &vault_id);
     hitz.register_pool_address(&vault_id);
@@ -159,12 +165,11 @@ fn mainnet_migration_keeps_s_and_l_and_ends_with_a_final_registry() {
     let usdc_amt = backing_xlm * market / ONE * hitz_usdc / hitz_xlm;
     StellarAssetClient::new(&env, &xlm).mint(&admin, &backing_xlm);
     StellarAssetClient::new(&env, &usdc).mint(&admin, &usdc_amt);
-    vault.seed(&hitz_xlm, &backing_xlm, &hitz_usdc, &usdc_amt);
-    let m = vault.market();
-    assert!(
-        (m.xlm_price - market).abs() * 1_000 < market,
-        "seeded off market"
-    );
+    vault.seed(&xlm, &hitz_xlm, &backing_xlm);
+    vault.seed(&usdc, &hitz_usdc, &usdc_amt);
+    let rate = vault.rate(&xlm, &usdc);
+    assert!((rate - market).abs() * 1_000 < market, "seeded off market");
+    assert_eq!(vault.dislocation(&xlm, &usdc), 0);
     assert_eq!(hitz.total_mass(), wallet);
 
     // ── E. Final registry, then renounce ─────────────────────────
@@ -193,6 +198,34 @@ fn mainnet_migration_keeps_s_and_l_and_ends_with_a_final_registry() {
     assert_eq!(TokenClient::new(&env, &token_id).balance(&trader), out);
     let out = vault.swap(&trader, &trader, &token_id, &usdc, &out, &0);
     assert!(out > 0);
+
+    // ── Later: freeze the vault's code, then list a third asset ──
+    vault.renounce_upgrades();
+    assert!(!vault.upgradable());
+    let eurc = env
+        .register_stellar_asset_contract_v2(Address::generate(&env))
+        .address();
+    vault.propose_listing(&eurc);
+    env.ledger().with_mut(|l| l.timestamp += UPGRADE_DELAY_SECS);
+    vault.list_asset(&eurc);
+    // The admin wallet is an ordinary account now: it buys HITZ from the
+    // vault, is vaulted for holding more than L, and can still seed.
+    StellarAssetClient::new(&env, &usdc).mint(&admin, &(20 * H));
+    let seed_hitz = vault.swap(&admin, &admin, &usdc, &token_id, &(20 * H), &0);
+    assert!(hitz.is_account_vaulted(&admin));
+    let u = vault.pool(&usdc);
+    let eur = 1_160_000_000; // 1.16 USDC per EURC, 9 decimals
+    let seed_eurc = seed_hitz * u.reserve / u.hitz * ONE / eur;
+    StellarAssetClient::new(&env, &eurc).mint(&admin, &seed_eurc);
+    vault.seed(&eurc, &seed_hitz, &seed_eurc);
+    let rate = vault.rate(&eurc, &usdc);
+    assert!((rate - eur).abs() * 1_000 < eur, "EURC seeded off market");
+    assert_eq!(hitz.total_mass(), hitz.balance(&vault_id));
+
+    StellarAssetClient::new(&env, &eurc).mint(&trader, &(10 * H));
+    assert!(vault.swap(&trader, &trader, &eurc, &xlm, &(10 * H), &0) > 0);
+    vault.renounce();
+    assert_eq!(vault.admin(), None);
 }
 
 /// Names of the events `contract` emitted in the last invocation.

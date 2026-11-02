@@ -1,6 +1,6 @@
 ## What an XLM -> HITZ swap costs (fee + price impact vs fair price)
 
-| Backing | Size | Aquarius 0.1% (pool keeps half) | Flat 1% | k=50 | Proposal: 1% floor, k=100, 2h |
+| Backing | Size | Aquarius 0.1% (pool keeps half) | Flat 1% | k=50 | Contract: 1% floor, k=100, 2h |
 |---|---|---|---|---|---|
 | $2,824 | $5 | 0.37% | 1.27% | 1.58% | 1.99% |
 | $2,824 | $20 | 1.17% | 2.06% | 3.99% | 9.64% |
