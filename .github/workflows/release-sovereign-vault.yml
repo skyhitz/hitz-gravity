@@ -1,0 +1,33 @@
+# Builds the sovereign-vault Soroban contract reproducibly and publishes the
+# WASM as a GitHub Release asset for Stellar Expert source validation, the
+# same way release.yml does for the gravity token.
+#
+# Triggered by tags matching sovereign-vault-v* (e.g. sovereign-vault-v1.0.0).
+# The prefix doesn't start with "v", so it never triggers the token release.
+
+name: Build and Release (Sovereign Vault)
+
+on:
+  push:
+    tags:
+      - "sovereign-vault-v*"
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Release tag (e.g. sovereign-vault-v1.0.0)"
+        required: true
+
+jobs:
+  release-sovereign-vault:
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: stellar-expert/soroban-build-workflow/.github/workflows/release.yml@v25.1.0
+    with:
+      release_name: ${{ github.event.inputs.release_version || github.ref_name }}
+      release_description: "HITZ Sovereign Vault, Soroban contract release"
+      relative_path: contracts/sovereign-vault
+      package: sovereign-vault
+    secrets:
+      release_token: ${{ secrets.GITHUB_TOKEN }}

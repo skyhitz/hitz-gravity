@@ -1,0 +1,22 @@
+[package]
+name = "sovereign-vault"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["lib", "cdylib"]
+doctest = false
+
+[features]
+# Runs the tests that need the release Wasm builds (tests/mainnet_migration.rs
+# and tests/release_budget.rs):
+# `cargo build --target wasm32v1-none --release -p gravity-token -p sovereign-vault` first.
+migration-rehearsal = []
+
+[dependencies]
+soroban-sdk = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+gravity-token = { path = "../gravity-token" }

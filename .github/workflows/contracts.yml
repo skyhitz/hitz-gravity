@@ -1,0 +1,78 @@
+# Tests the Soroban contracts on every pull request and push to main.
+#
+#   1. Unit tests for the token and the vault (cargo test --workspace).
+#   2. Release Wasm build of both contracts, checked against the mainnet
+#      contract size limit (128 KiB, `contractMaxSizeBytes`).
+#   3. The mainnet migration rehearsal: upgrades the token bytecode that is
+#      live on mainnet to this build and walks the vault migration
+#      (contracts/sovereign-vault/tests/mainnet_migration.rs), and the
+#      release vault with every asset it can list must swap within the
+#      network's per-transaction limits (tests/release_budget.rs).
+#   4. Test snapshots are committed and current, so reviewers see every
+#      change in ledger state or events.
+#
+# Releases are built separately and reproducibly by release.yml and
+# release-sovereign-vault.yml.
+
+name: Contracts
+
+on:
+  pull_request:
+    paths:
+      - "contracts/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/contracts.yml"
+  push:
+    branches: [main]
+    paths:
+      - "contracts/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/contracts.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # rustup ships on the runner image; no third-party toolchain action.
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --target wasm32v1-none
+          rustup default stable
+          cargo --version
+
+      - name: Unit tests
+        run: cargo test --workspace --locked
+
+      - name: Release Wasm build
+        run: cargo build --locked --target wasm32v1-none --release -p gravity-token -p sovereign-vault
+
+      - name: Contract size under the mainnet limit
+        run: |
+          limit=131072
+          for f in target/wasm32v1-none/release/gravity_token.wasm target/wasm32v1-none/release/sovereign_vault.wasm; do
+            size=$(stat -c%s "$f")
+            echo "$f: $size bytes (limit $limit)"
+            if [ "$size" -gt "$limit" ]; then
+              echo "::error::$f is $size bytes, over the $limit-byte mainnet limit"
+              exit 1
+            fi
+          done
+
+      - name: Mainnet migration rehearsal and release budget
+        run: cargo test --locked -p sovereign-vault --features migration-rehearsal --test mainnet_migration --test release_budget -- --nocapture
+
+      - name: Test snapshots are committed
+        run: |
+          if [ -n "$(git status --porcelain -- '*/test_snapshots/*')" ]; then
+            git status --porcelain -- '*/test_snapshots/*'
+            echo "::error::Test snapshots changed. Run cargo test and commit contracts/*/test_snapshots."
+            exit 1
+          fi
