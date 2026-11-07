@@ -6,7 +6,7 @@
  *   [S · Total Mass] [L · Event Horizon] [Your Orbit — live gauge]
  *
  * Always visible on every tab. Reads from ProtocolContext so it reflects
- * the same numbers the Monitor tab shows, plus any in-flight Smart Swap
+ * the same numbers the Monitor tab shows, plus any in-flight vault swap
  * preview (expectedOut) so the gauge animates while the user types.
  */
 
