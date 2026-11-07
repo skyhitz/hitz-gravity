@@ -128,6 +128,7 @@ function TractionBody({
     { label: "Accounts below L", hitz: s.people, note: `${data.holders.people - data.holders.vaultedPeople} accounts` },
     { label: "Routers", hitz: s.routers, note: "pass-through infrastructure" },
     { label: "Other contracts", hitz: s.contracts, note: `${data.holders.contracts} bots / aggregators` },
+    { label: "Not yet indexed", hitz: s.unindexed ?? 0, note: "held by addresses our holder index hasn't seen" },
   ].filter((r) => r.hitz > 0 || r.label === "Accounts below L");
 
   return (

@@ -1,16 +1,15 @@
 /**
- * holders.ts — the on-chain holder set behind the Holder Ecosystem.
+ * holders.ts: the on-chain holder set behind the Holder Ecosystem.
  *
- * Soroban storage has no iteration API and the HITZ contract keeps no
- * holder index, so discovery and state come from two places:
+ * Soroban storage has no iteration API, so discovery and state come from two
+ * places:
  *
- *   1. Discovery — which addresses own a `DataKey::Balance(addr)` entry.
- *      Stellar Expert indexes every contract-data ledger entry; we read that
- *      index through the Worker's `/api/holders` route, because Stellar
- *      Expert rejects browser requests from our origin. `next dev` doesn't
- *      run the Worker, so there we fall back to calling Stellar Expert
- *      directly — it does allow `localhost`.
- *   2. State — balances and vault flags are read from Soroban RPC with
+ *   1. Discovery: our own holder index, served by the Worker's
+ *      `/api/holders` route (the D1 `holders` table: every address in an
+ *      ingested HITZ event, plus a one-time backfill of holders older than
+ *      the event store). It replaced Stellar Expert's contract-data index
+ *      when that API went behind a paywall in November 2026.
+ *   2. State: balances and vault flags are read from Soroban RPC with
  *      `getLedgerEntries`, i.e. the exact ledger entries the contract reads.
  *      The index only tells us which keys to ask for; amounts never come
  *      from it.
@@ -23,92 +22,33 @@ import * as StellarSdk from "@stellar/stellar-sdk";
 import { CONTRACT_ID, RPC_URL, getAdmin } from "./stellar";
 import { VAULT_ID, readPools } from "./vault";
 import { getTokenInfos } from "./tokens";
+import { apiBase } from "./api";
 
 const server = new StellarSdk.rpc.Server(RPC_URL);
-
-const EXPERT_CONTRACT_DATA = `https://api.stellar.expert/explorer/public/contract-data/${CONTRACT_ID}`;
 
 /** Soroban RPC caps `getLedgerEntries` at 200 keys per request. */
 const LEDGER_KEYS_PER_REQUEST = 200;
 
 // ─── Discovery ───────────────────────────────────────────────────────────────
 
-/** One contract-data record as Stellar Expert (or our proxy of it) returns it. */
-interface ContractDataRecord {
-  /** Base64 XDR ScVal of the storage key. */
-  key: string;
-  /** Unix seconds of the entry's last write. */
-  updated?: number;
-}
-
 export interface HolderIndexEntry {
   address: string;
-  /** Unix seconds of the balance entry's last write, per the indexer. */
+  /** Unix seconds of the balance entry's last write, when known (the index doesn't record it). */
   updated: number | null;
 }
 
 /**
  * Every address that has ever held a HITZ balance entry (including zero
- * balances — callers filter those after reading live state).
+ * balances: callers filter those after reading live state).
  */
 export async function fetchHolderIndex(): Promise<HolderIndexEntry[]> {
-  let records: ContractDataRecord[];
-  try {
-    records = await fetchIndexViaWorker();
-  } catch (workerErr) {
-    try {
-      records = await fetchIndexDirect();
-    } catch {
-      throw workerErr;
-    }
-  }
-
-  const out = new Map<string, HolderIndexEntry>();
-  for (const rec of records) {
-    const address = balanceKeyAddress(rec.key);
-    if (address) out.set(address, { address, updated: rec.updated ?? null });
-  }
-  return [...out.values()];
-}
-
-async function fetchIndexViaWorker(): Promise<ContractDataRecord[]> {
-  const res = await fetch("/api/holders", { headers: { Accept: "application/json" } });
+  const res = await fetch(`${apiBase()}/api/holders`, { headers: { Accept: "application/json" } });
   if (!res.ok) throw new Error(`holder index unavailable (HTTP ${res.status})`);
-  const body = (await res.json()) as { records?: ContractDataRecord[] };
-  if (!Array.isArray(body.records)) throw new Error("holder index malformed");
-  return body.records;
-}
-
-async function fetchIndexDirect(): Promise<ContractDataRecord[]> {
-  const records: ContractDataRecord[] = [];
-  let url: string | null = `${EXPERT_CONTRACT_DATA}?order=asc&limit=200`;
-  // Hard page cap so a misbehaving cursor can't spin forever.
-  for (let page = 0; url && page < 50; page++) {
-    const res: Response = await fetch(url);
-    if (!res.ok) throw new Error(`Stellar Expert HTTP ${res.status}`);
-    const body = await res.json();
-    const batch: ContractDataRecord[] = body?._embedded?.records ?? [];
-    records.push(...batch);
-    const next: string | undefined = body?._links?.next?.href;
-    url = batch.length === 200 && next ? `https://api.stellar.expert${next}` : null;
-  }
-  return records;
-}
-
-/** `DataKey::Balance(addr)` encodes as `scvVec([scvSymbol("Balance"), scvAddress])`. */
-function balanceKeyAddress(keyXdr: string): string | null {
-  try {
-    const key = StellarSdk.xdr.ScVal.fromXDR(keyXdr, "base64");
-    if (key.switch() !== StellarSdk.xdr.ScValType.scvVec()) return null;
-    const vec = key.vec();
-    if (!vec || vec.length !== 2) return null;
-    if (vec[0].switch() !== StellarSdk.xdr.ScValType.scvSymbol()) return null;
-    if (vec[0].sym().toString() !== "Balance") return null;
-    if (vec[1].switch() !== StellarSdk.xdr.ScValType.scvAddress()) return null;
-    return StellarSdk.Address.fromScAddress(vec[1].address()).toString();
-  } catch {
-    return null;
-  }
+  const body = (await res.json()) as { holders?: unknown };
+  if (!Array.isArray(body.holders)) throw new Error("holder index malformed");
+  return body.holders
+    .filter((a): a is string => typeof a === "string" && a.length === 56)
+    .map((address) => ({ address, updated: null }));
 }
 
 // ─── Live state ──────────────────────────────────────────────────────────────

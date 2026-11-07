@@ -1,66 +1,50 @@
-// Holder discovery + balances, server-side.
+// HITZ holder index and balances, server-side.
 //
-// Soroban storage can't be enumerated over RPC, so which addresses hold a
-// `DataKey::Balance(addr)` entry comes from Stellar Expert's index of the
-// contract's storage. Amounts always come from the ledger itself.
-// Used by /api/holders (index only; the browser reads balances) and by the
+// Soroban storage can't be enumerated over RPC, so which addresses to read
+// comes from our own index: the D1 `holders` table (migrations/0002 and
+// later), filled from the HITZ events the cron ingests plus a one-time
+// backfill of holders older than the event store. Amounts always come from
+// the ledger itself (getLedgerEntries on `Balance(addr)`), never from events.
+// Used by /api/holders (the browser then reads balances itself) and by the
 // traction step of the ingestion cron.
 
 import * as StellarSdk from "@stellar/stellar-sdk";
+import { insertMany } from "./db";
 import type { Env } from "./types";
 
-const EXPERT_API = "https://api.stellar.expert";
-const PAGE_LIMIT = 200;
-const MAX_PAGES = 50;
 /** Soroban RPC caps `getLedgerEntries` at 200 keys per request. */
 const LEDGER_KEYS_PER_REQUEST = 200;
 
-export interface ContractDataRecord {
-  /** Base64 XDR ScVal of the storage key. */
-  key: string;
-  /** Unix seconds of the entry's last write. */
-  updated?: number;
+const isAddress = (v: unknown): v is string => typeof v === "string" && v.length === 56 && (v[0] === "G" || v[0] === "C");
+
+/**
+ * Addresses an event shows holding (or having held) HITZ: both sides of a
+ * transfer, the recipient of a mint, the source of a burn, the account a
+ * vault event is about. `topics` are the ones after the event name.
+ */
+export function holderAddressesOf(name: string, topics: unknown[]): string[] {
+  const picked =
+    name === "transfer" ? topics.slice(0, 2) : name === "mint" || name === "burn" || name === "vaulted" ? topics.slice(0, 1) : [];
+  return picked.filter(isAddress);
 }
 
-interface ExpertPage {
-  _embedded?: { records?: ContractDataRecord[] };
-  _links?: { next?: { href?: string } };
+/** Add addresses to the index (idempotent). */
+export async function indexHolders(env: Env, addresses: Iterable<string>, source: "events" | "backfill"): Promise<number> {
+  const unique = [...new Set(addresses)].filter(isAddress);
+  const now = new Date().toISOString();
+  await insertMany(env.DB, "INSERT OR IGNORE", "holders", ["address", "source", "added_at"], unique.map((a) => [a, source, now]));
+  return unique.length;
 }
 
-/** Every storage entry of `contractId`, as Stellar Expert indexes it. */
-export async function fetchContractDataIndex(contractId: string): Promise<ContractDataRecord[]> {
-  const prefix = `/explorer/public/contract-data/${contractId}`;
-  const records: ContractDataRecord[] = [];
-  let path: string | null = `${prefix}?order=asc&limit=${PAGE_LIMIT}`;
-  for (let page = 0; path && page < MAX_PAGES; page++) {
-    const res = await fetch(EXPERT_API + path, { headers: { Accept: "application/json" } });
-    if (!res.ok) throw new Error(`Stellar Expert HTTP ${res.status}`);
-    const body = (await res.json()) as ExpertPage;
-    const batch = body._embedded?.records ?? [];
-    for (const r of batch) records.push({ key: r.key, updated: r.updated });
-    const next = body._links?.next?.href;
-    // Only follow `next` within the same contract's listing.
-    path = batch.length === PAGE_LIMIT && next?.startsWith(prefix) ? next : null;
-  }
-  return records;
+/** Every indexed address. */
+export async function listHolders(env: Env): Promise<string[]> {
+  const { results } = await env.DB.prepare("SELECT address FROM holders ORDER BY address").all<{ address: string }>();
+  return results.map((r) => r.address);
 }
 
-/** `DataKey::Balance(addr)` encodes as `scvVec([scvSymbol("Balance"), scvAddress])`. */
-function balanceKeyAddress(keyXdr: string): string | null {
-  try {
-    const vec = StellarSdk.xdr.ScVal.fromXDR(keyXdr, "base64").vec();
-    if (!vec || vec.length !== 2 || vec[0].switch() !== StellarSdk.xdr.ScValType.scvSymbol()) return null;
-    if (vec[0].sym().toString() !== "Balance") return null;
-    return StellarSdk.Address.fromScAddress(vec[1].address()).toString();
-  } catch {
-    return null;
-  }
-}
-
-/** Every HITZ balance on the ledger (whole tokens), keyed by address. */
+/** Every HITZ balance on the ledger (whole tokens), keyed by address, for the indexed holders. */
 export async function readAllBalances(env: Env): Promise<Map<string, number>> {
-  const index = await fetchContractDataIndex(env.HITZ_CONTRACT_ID);
-  const addresses = [...new Set(index.map((r) => balanceKeyAddress(r.key)).filter((a): a is string => !!a))];
+  const addresses = await listHolders(env);
   const contract = StellarSdk.Address.fromString(env.HITZ_CONTRACT_ID).toScAddress();
   const keys = addresses.map((a) =>
     StellarSdk.xdr.LedgerKey.contractData(
