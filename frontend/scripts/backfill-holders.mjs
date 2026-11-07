@@ -8,14 +8,17 @@
 //
 //   1. Candidates
 //      a. holders of the classic HITZ asset (the legacy community);
-//      b. every address in a HITZ transfer / transfer_from / mint call that a
-//         known account made before the store started (Horizon operations,
-//         parameters decoded);
+//      b. every address in a HITZ transfer / transfer_from / mint call made,
+//         before the store started, by an account that held HITZ then (the
+//         admin and every account found in a or c): Horizon operations,
+//         parameters decoded;
 //      c. every HITZ `Balance(addr)` key in the Soroban footprint of any
 //         transaction in a ledger where an Aquarius pool traded before the
 //         store started (ledgers from D1 `pool_reserves`; envelopes from
 //         Horizon). Every HITZ purchase in that window went through one.
-//      Step b repeats for each account found until nothing new turns up.
+//      Step b repeats for each new holder until nothing new turns up. Only
+//      accounts that held HITZ before the store could have sent it then, so
+//      high-volume bots that merely routed through HITZ are never walked.
 //   2. Keeps the candidates that hold a `Balance` entry on the ledger.
 //   3. Proves completeness: total_supply() minus the balances of every
 //      indexed holder is the HITZ held by addresses still unknown.
@@ -199,22 +202,31 @@ for (let url = `/accounts?asset=HITZ:${ADMIN}&limit=200`; url; ) {
 }
 console.log(`[holders] + classic HITZ holders: ${candidates.size} candidates`);
 
-for (let i = 0; i < poolLedgers.length; i += 8) {
-  const batch = await Promise.all(poolLedgers.slice(i, i + 8).map(footprintHolders));
-  for (const s of batch) for (const a of s) candidates.add(a);
+// Accounts that held HITZ before the store started: the admin, plus every
+// Balance key in a launch-window trade's footprint.
+const earlyHolders = new Set([ADMIN]);
+for (let i = 0; i < poolLedgers.length; i += 4) {
+  const batch = await Promise.all(poolLedgers.slice(i, i + 4).map(footprintHolders));
+  for (const s of batch) for (const a of s) earlyHolders.add(a);
+  if (i % 40 === 0) console.log(`[holders] footprints: ${i + batch.length}/${poolLedgers.length} ledgers, ${earlyHolders.size} early holders`);
 }
+for (const a of earlyHolders) candidates.add(a);
 console.log(`[holders] + launch-window trade footprints: ${candidates.size} candidates`);
 
-// Recipients of HITZ calls by every known account, until a fixpoint.
+// Recipients of HITZ calls those holders made, then the recipients' own
+// calls, until nothing new turns up.
 const scanned = new Set();
 for (let round = 1; ; round++) {
-  const queue = [...candidates].filter((a) => a.startsWith("G") && !scanned.has(a));
+  const queue = [...earlyHolders].filter((a) => a.startsWith("G") && !scanned.has(a));
   if (!queue.length) break;
   for (const a of queue) {
     scanned.add(a);
-    for (const r of await callRecipients(a, storeStartTs)) candidates.add(r);
+    for (const r of await callRecipients(a, storeStartTs)) {
+      candidates.add(r);
+      earlyHolders.add(r);
+    }
   }
-  console.log(`[holders] round ${round}: scanned ${scanned.size} accounts, ${candidates.size} candidates`);
+  console.log(`[holders] round ${round}: walked ${scanned.size} accounts, ${candidates.size} candidates`);
 }
 
 // ─── Ledger check + completeness ─────────────────────────────────────────────
