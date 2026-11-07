@@ -10,8 +10,8 @@
 //                              Stellar Expert contract metadata → contract_info
 //   3. Pool registry         : list_pools → the Sovereign Vault's assets() (or an
 //                              AMM's get_tokens) → quote name() → pools
-//   4. Pool reserves         : Stellar Expert events: the vault's seeded / hop /
-//                              deposit, or an AMM's update_reserves
+//   4. Pool reserves         : the vault's seeded / hop / deposit events (Soroban
+//                              RPC), or an AMM's update_reserves (Stellar Expert)
 //   5. Quote prices          — Horizon hourly VWAP vs USDC
 //   6. Price series          — recompute changed hours → price_hourly + snapshot
 //   7. Liquidity             — depth, volume, fees, TVL trend (last 30 days) → snapshot
@@ -51,6 +51,7 @@ const ENRICH_SCAN = 200;
 const TX_LOOKUPS = 12;
 const CONTRACT_LOOKUPS = 4;
 const POOL_PAGES = 2;
+const VAULT_EVENT_PAGES = 5;
 const QUOTE_PAGES = 2;
 
 export const PRICE_SNAPSHOT_KEY = "price-history";
@@ -231,6 +232,11 @@ async function lookupContract(id: string): Promise<Record<string, unknown> | nul
   const lookedUpAt = new Date().toISOString();
   const res = await fetch(`${STELLAR_EXPERT}/contract/${id}`, { headers: { Accept: "application/json" } });
   if (res.status === 404) return { error: true, lookedUpAt };
+  // Since Nov 2026 Stellar Expert's API charges per request (x402) and
+  // answers 402 without a payment. Contract metadata only labels reports, so
+  // record the miss (marked, so it can be retried if access returns) rather
+  // than stall the enrichment walk on it forever.
+  if (res.status === 402) return { error: true, unavailable: "HTTP 402", lookedUpAt };
   if (!res.ok) return null;
   const body = (await res.json()) as Record<string, unknown> & {
     validation?: { status?: string; repository?: string };
@@ -472,21 +478,16 @@ async function expertEvents(contract: string, cursor: string | null): Promise<Ex
   return ((await res.json()) as { _embedded?: { records?: ExpertEvent[] } })._embedded?.records ?? [];
 }
 
-/** A vault event body: a map with symbol keys (INTEGRATION.md, "Events"). */
-function vaultEventBody(bodyXdr: string): Record<string, unknown> | null {
-  try {
-    const v = decodeScVal(bodyXdr);
-    return v !== null && typeof v === "object" ? (v as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Reserve points for each of the vault's pools from its events, in order:
  * `seeded` sets a pool's starting reserves, every `hop` carries its pool's
  * reserves after the trade, and a `deposit` adds its amounts to the pool's
- * previous point. One cursor per vault.
+ * previous point.
+ *
+ * Read from Soroban RPC `getEvents`, like the HITZ events (step 1): free and
+ * reliable from the Worker, where Stellar Expert's API now charges per
+ * request (HTTP 402). RPC keeps ~7 days of events; the 5-minute cron and the
+ * daily health check keep the cursor well inside that. One cursor per vault.
  */
 async function syncVaultReserves(
   env: Env,
@@ -494,7 +495,9 @@ async function syncVaultReserves(
   pools: Map<string, PoolRow>,
   bump: (ts: number) => void
 ): Promise<Record<string, number>> {
-  const source = `vault:${vault}`;
+  const server = new StellarSdk.rpc.Server(env.RPC_URL);
+  const filters = [{ type: "contract" as const, contractIds: [vault] }];
+  const source = `vault-rpc:${vault}`;
   let cursor = await getCursor(env.DB, source);
   const added: Record<string, number> = {};
   // Latest point per pool, for deposits; loaded from D1 on first need.
@@ -511,40 +514,64 @@ async function syncVaultReserves(
     return last.get(key) ?? null;
   };
 
-  for (let page = 0; page < POOL_PAGES; page++) {
-    const records = await expertEvents(vault, cursor);
+  for (let page = 0; page < VAULT_EVENT_PAGES; page++) {
+    let res: StellarSdk.rpc.Api.GetEventsResponse;
+    try {
+      res = cursor
+        ? await server.getEvents({ filters, cursor, limit: 200 })
+        : await server.getEvents({
+            filters,
+            // The vault launched within RPC retention; this reaches back to it.
+            startLedger: Math.max(1, (await server.getLatestLedger()).sequence - 100_000),
+            limit: 200,
+          });
+    } catch (err) {
+      // Same recovery as the HITZ events: a cursor past retention restarts
+      // from the retention floor (dedup by event id makes the overlap safe).
+      if (cursor && /within.*range|outside.*window|must be|retention/i.test(String(err))) {
+        console.warn(`[ingest] ${source} cursor ${cursor} is stale, restarting from the retention floor`);
+        cursor = null;
+        continue;
+      }
+      throw err;
+    }
+
     const rows: unknown[][] = [];
-    for (const e of records) {
-      const name = e.topics?.[0];
-      if (name !== "seeded" && name !== "hop" && name !== "deposit") continue;
-      const asset = name === "deposit" ? e.topics[2] : e.topics[1];
+    for (const evt of res.events) {
+      const e = parseEvent(evt);
+      if (e.name !== "seeded" && e.name !== "hop" && e.name !== "deposit") continue;
+      // Topics after the name: [asset] for seeded / hop, [from, asset] for deposit.
+      const asset = String(e.name === "deposit" ? e.topics[1] : e.topics[0]);
       const key = vaultPoolKey(vault, asset);
       const pool = pools.get(key);
-      const body = vaultEventBody(e.bodyXdr);
-      if (!pool || !body) continue;
+      const body = e.data as Record<string, unknown> | null;
+      if (!pool || !body || typeof body !== "object") continue;
       let point: { hitz: bigint; quote: bigint } | null = null;
-      if (name === "seeded") {
+      if (e.name === "seeded") {
         point = { hitz: BigInt(body.hitz as bigint), quote: BigInt(body.amount as bigint) };
-      } else if (name === "hop") {
+      } else if (e.name === "hop") {
         point = { hitz: BigInt(body.reserve_hitz as bigint), quote: BigInt(body.reserve_asset as bigint) };
       } else {
         const prev = await previous(key);
         if (prev) point = { hitz: prev.hitz + BigInt(body.hitz as bigint), quote: prev.quote + BigInt(body.amount as bigint) };
       }
       if (!point) continue;
+      const ts = Math.floor(Date.parse(e.ts) / 1000);
       last.set(key, point);
-      rows.push([key, canonicalEventId(e.id), e.ts, point.hitz.toString(), point.quote.toString()]);
+      rows.push([key, canonicalEventId(e.id), ts, point.hitz.toString(), point.quote.toString()]);
       added[pool.label] = (added[pool.label] ?? 0) + 1;
-      bump(e.ts);
+      bump(ts);
     }
     // Insert before moving the cursor: a deposit's point depends on the
     // rows before it, so they must never be skipped.
     await insertMany(env.DB, "INSERT OR IGNORE", "pool_reserves", ["pool", "event_id", "ts", "hitz", "quote"], rows);
-    if (records.length) {
-      cursor = records[records.length - 1].paging_token;
+    if (res.cursor) {
+      cursor = res.cursor;
       await setCursor(env.DB, source, cursor);
     }
-    if (records.length < 200) break;
+    // Only the cursor reaching the chain tip means caught up (see step 1).
+    const at = cursorLedger(res.cursor);
+    if (!res.cursor || at === null || at >= res.latestLedger) break;
   }
   return added;
 }
@@ -764,6 +791,10 @@ async function rebuildLiquidity(env: Env, changedFrom: number | null) {
     dislocation,
     asOf: new Date().toISOString(),
   });
+  // Active pools with no reserves yet (a venue just registered, or its
+  // events not ingested yet): keep serving the last snapshot rather than an
+  // empty one.
+  if (!snapshot.pools.length) return { skipped: "no reserves for the active pools yet" };
   await env.DB.prepare("INSERT OR REPLACE INTO snapshots (key, json, updated_at) VALUES (?, ?, ?)")
     .bind(LIQUIDITY_SNAPSHOT_KEY, JSON.stringify(snapshot), snapshot.asOf)
     .run();
