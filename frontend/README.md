@@ -39,9 +39,13 @@ pnpm build          # static export → out/
 ## Deploy
 
 ```bash
-pnpm build                    # next build → out/
-npx wrangler deploy           # bundles worker + uploads assets
+pnpm build                                        # next build → out/
+npx wrangler d1 migrations apply hitz-data --remote   # only when migrations/ changed
+npx wrangler deploy                               # bundles worker + uploads assets
 ```
+
+Apply new D1 migrations before deploying a Worker that reads the new
+schema.
 
 Single deploy ships the Worker and the static site together. The
 `[assets]` binding in `wrangler.toml` points at `out/`, and the Worker

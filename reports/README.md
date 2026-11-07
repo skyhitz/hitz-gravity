@@ -20,8 +20,9 @@ remain in git history.)
 
 ```
 Soroban RPC ──getEvents──▶ Worker cron (every 5 min) ──▶ D1 `hitz-data` ──▶ /api/data/* ──▶ contract-report.mjs ──▶ reports/YYYY-MM.md
-Horizon / Stellar Expert ──enrichment──┘                     │
-Vault events (Stellar Expert) + Horizon XLM/USD ─────────────┴──▶ /api/price/history, /api/liquidity (Monitor tab)
+Horizon ──enrichment──┘                                      │
+Vault events (Soroban RPC) + Horizon XLM/USD ────────────────┼──▶ /api/price/history, /api/liquidity (Monitor tab)
+Holder index (`holders`) + ledger balances ──────────────────┴──▶ /api/holders, /api/traction (Monitor tab)
 ```
 
 - **Ingestion** — `frontend/functions/_lib/ingest.ts`, run by the Worker's
@@ -29,11 +30,21 @@ Vault events (Stellar Expert) + Horizon XLM/USD ──────────�
   contract events (`transfer`, `vaulted`, `pool_registered`, …) from Soroban
   RPC, and enriches them the way the report generator used to on demand:
   Horizon tx envelopes (`tx_info`) and Stellar Expert contract metadata
-  (`contract_info`). Public RPC nodes keep only ~7 days of events, so the
+  (`contract_info`; since Stellar Expert's API began charging per request
+  in November 2026, misses are recorded as `unavailable` and the walk moves
+  on). Public RPC nodes keep only ~7 days of events, so the
   5-minute cadence leaves a wide safety margin. The same cron maintains the
   HITZ/USD price history and the liquidity snapshot used by the Monitor
   tab, from the Sovereign Vault's `seeded` / `hop` / `deposit` events (from
   the Aquarius pools' `update_reserves` events before Nov 4, 2026).
+- **Holder index** — our own, in D1 `holders`: every address in a stored
+  `transfer` / `mint` / `burn` / `vaulted` event (the v1 `*_event` names and
+  the SEP-41 names are stored alike), kept current by the cron, plus the
+  holders older than the event store (it starts May 11, 2026; HITZ started
+  April 25), found by `frontend/scripts/backfill-holders.mjs` and added by a
+  migration. Balances are always read from the ledger, never summed from
+  events, and the traction snapshot reports `unindexed`: total supply minus
+  every indexed balance, zero when the index is complete.
 - **Storage** — D1 database `hitz-data`, schema in
   `frontend/migrations/`. `hitz_events` rows are exactly the old JSONL rows.
 - **Read API** — `frontend/functions/api/data.ts`, public and edge-cached

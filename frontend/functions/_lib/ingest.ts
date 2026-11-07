@@ -15,7 +15,8 @@
 //   5. Quote prices          — Horizon hourly VWAP vs USDC
 //   6. Price series          — recompute changed hours → price_hourly + snapshot
 //   7. Liquidity             — depth, volume, fees, TVL trend (last 30 days) → snapshot
-//   8. Traction              — active accounts, acquisition channels, holders (hourly) → snapshot
+//   8. Traction              : active accounts, acquisition channels, holders (hourly) → snapshot
+//                              (holders from our own index: the D1 `holders` table, see _lib/holders.ts)
 
 import * as StellarSdk from "@stellar/stellar-sdk";
 import { existing, getCursor, insertMany, setCursor } from "./db";
@@ -38,7 +39,7 @@ import {
   type QuoteKind,
   type ReservePoint,
 } from "./price-model";
-import { readAllBalances } from "./holders";
+import { holderAddressesOf, indexHolders, readAllBalances } from "./holders";
 import { getSponsorAddress, simulateView } from "./stellar";
 import { summarizeTraction, type HolderBalance } from "./traction-model";
 import type { Env } from "./types";
@@ -186,6 +187,8 @@ async function ingestHitzEvents(env: Env) {
       ["id", "ledger", "ts", "tx_hash", "name", "topics", "data"],
       rows.map((e) => [e.id, e.ledger, e.ts, e.txHash, e.name, toJson(e.topics), toJson(e.data)])
     );
+    // Our own holder index: every address these events show holding HITZ.
+    await indexHolders(env, rows.flatMap((e) => holderAddressesOf(e.name, e.topics)), "events");
     inserted += rows.length;
 
     if (page.cursor) {
@@ -832,10 +835,11 @@ async function rebuildTraction(env: Env) {
     return { skipped: "fresh this hour" };
   }
 
-  const [pools, routers, limit] = await Promise.all([
+  const [pools, routers, limit, totalSupply] = await Promise.all([
     simulateView(env, env.HITZ_CONTRACT_ID, "list_pools") as Promise<string[]>,
     simulateView(env, env.HITZ_CONTRACT_ID, "list_routers") as Promise<string[]>,
     simulateView(env, env.HITZ_CONTRACT_ID, "safety_limit"),
+    simulateView(env, env.HITZ_CONTRACT_ID, "total_supply"),
   ]);
   // The gateway sponsor is derived from MASTER_SECRET; without it (local
   // dev) email-gateway numbers are reported as unknown, never guessed.
@@ -887,6 +891,7 @@ async function rebuildTraction(env: Env) {
     windowTxs: (windowRes.results[0] as { n: number })?.n ?? 0,
     holders,
     safetyLimit: Number(limit) / 1e7,
+    totalSupply: Number(totalSupply) / 1e7,
     nowMs,
     since,
     gatewayKnown: sponsor !== null,
@@ -898,6 +903,7 @@ async function rebuildTraction(env: Env) {
   return {
     activeAccounts30d: snapshot.window.activePeople,
     holders: snapshot.holders.people,
+    unindexedHitz: snapshot.holders.supply.unindexed,
     gatewayKnown: sponsor !== null,
   };
 }

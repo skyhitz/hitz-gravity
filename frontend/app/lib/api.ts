@@ -1,12 +1,12 @@
 /**
- * api.ts — reads the Worker's pre-rendered market snapshots.
+ * api.ts: reads the Worker's pre-rendered snapshots and indexes.
  *
  * `next dev` doesn't run the Worker, so in development requests go to
  * `NEXT_PUBLIC_API_ORIGIN` (e.g. a local `wrangler dev` on :8787), falling
  * back to production — the snapshot routes are public and CORS-open.
  */
 
-function apiBase(): string {
+export function apiBase(): string {
   if (process.env.NODE_ENV !== "development") return "";
   return process.env.NEXT_PUBLIC_API_ORIGIN ?? "https://skyhitz.io";
 }

@@ -93,6 +93,12 @@ export interface TractionSnapshot {
       contracts: number;
       vaultedPeople: number;
       people: number;
+      /**
+       * HITZ held by addresses the holder index doesn't know: total supply
+       * minus every indexed balance. Zero when the index is complete.
+       */
+      unindexed?: number;
+      /** Total supply (whole HITZ). */
       total: number;
     };
   };
@@ -126,6 +132,8 @@ export function summarizeTraction(args: {
   windowTxs: number;
   holders: HolderBalance[];
   safetyLimit: number;
+  /** The token's total_supply (whole HITZ), to measure what the index misses. */
+  totalSupply?: number;
   nowMs: number;
   since: string;
   gatewayKnown: boolean;
@@ -217,7 +225,8 @@ export function summarizeTraction(args: {
     contracts: sum(byRole("contract")),
     vaultedPeople: sum(vaulted),
     people: sum(below),
-    total: sum(args.holders),
+    unindexed: args.totalSupply === undefined ? 0 : Math.max(0, args.totalSupply - sum(args.holders)),
+    total: args.totalSupply ?? sum(args.holders),
   };
   const round = (v: number) => Math.round(v * 1e7) / 1e7;
 
