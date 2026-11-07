@@ -43,7 +43,6 @@ const VIEW_SOURCE = "GBZXN7PIRZGNMHGA7MUUUF4GWPY5AYPV6LY4UV2GL6VJGIQRXFDNMADI";
 
 const outIdx = process.argv.indexOf("--out");
 const outFile = outIdx > 0 ? process.argv[outIdx + 1] : null;
-const server = new StellarSdk.rpc.Server(RPC_URL);
 const isAddress = (v) => typeof v === "string" && v.length === 56 && (v[0] === "G" || v[0] === "C");
 
 function d1(sql) {
@@ -67,6 +66,18 @@ async function horizon(path) {
   }
 }
 
+/** Soroban RPC over plain fetch (works behind HTTPS proxies, unlike older axios). */
+async function rpc(method, params) {
+  const res = await fetch(RPC_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+  });
+  const body = await res.json();
+  if (body.error) throw new Error(`${method}: ${JSON.stringify(body.error)}`);
+  return body.result;
+}
+
 async function view(method) {
   const tx = new StellarSdk.TransactionBuilder(new StellarSdk.Account(VIEW_SOURCE, "0"), {
     fee: "100",
@@ -75,9 +86,9 @@ async function view(method) {
     .addOperation(new StellarSdk.Contract(HITZ).call(method))
     .setTimeout(30)
     .build();
-  const sim = await server.simulateTransaction(tx);
-  if (!StellarSdk.rpc.Api.isSimulationSuccess(sim) || !sim.result) throw new Error(`${method} failed`);
-  return StellarSdk.scValToNative(sim.result.retval);
+  const sim = await rpc("simulateTransaction", { transaction: tx.toXDR() });
+  if (sim.error || !sim.results?.[0]) throw new Error(`${method} failed: ${sim.error}`);
+  return StellarSdk.scValToNative(StellarSdk.xdr.ScVal.fromXDR(sim.results[0].xdr, "base64"));
 }
 
 /** address → raw balance, for the addresses that hold a HITZ Balance entry. */
@@ -95,9 +106,9 @@ async function balances(addresses) {
         })
       )
     );
-    const { entries } = await server.getLedgerEntries(...keys);
-    for (const e of entries) {
-      const data = e.val.contractData();
+    const { entries } = await rpc("getLedgerEntries", { keys: keys.map((k) => k.toXDR("base64")) });
+    for (const e of entries ?? []) {
+      const data = StellarSdk.xdr.LedgerEntryData.fromXDR(e.xdr, "base64").contractData();
       out.set(StellarSdk.Address.fromScAddress(data.key().vec()[1].address()).toString(), BigInt(StellarSdk.scValToNative(data.val())));
     }
   }
