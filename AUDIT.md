@@ -383,6 +383,11 @@ Starting backing $2,787; holding it untouched ends at $3,047.
 
 ## Production checklist
 
+Status on Nov 4, 2026: migration steps A to D are done on mainnet (token
+v2.0.0 at the same address, vault `CDEISYZM…NNBWU` registered and seeded with
+10% of the Aquarius liquidity); see MIGRATION.md for the transaction record.
+Step E, the audit and the multisig are still ahead.
+
 ### Contracts
 
 - [x] Unit tests: 97 token, 43 vault, 5 integration (`cargo test --workspace`)
@@ -398,24 +403,28 @@ Starting backing $2,787; holding it untouched ends at $3,047.
 - [ ] Write down the listing criteria and seed sizing before the first
       listing (V-11)
 - [ ] Independent audit of both contracts and the migration (P-3)
-- [ ] Tag `vX.Y.Z` and `sovereign-vault-vX.Y.Z`; confirm Stellar Expert validates both
+- [x] Tag `vX.Y.Z` and `sovereign-vault-vX.Y.Z`; confirm Stellar Expert validates both
+      (`v2.0.0` and `sovereign-vault-v1.0.0`, both verified against `2807ed1`)
 - [ ] Confirm swap resource fees on testnet (~0.013 XLM measured in tests);
       confirm arbitrage still pays at real gas
 
 ### Migration (`contracts/sovereign-vault/MIGRATION.md`)
 
-- [ ] Testnet run of steps A-E with real Aquarius contracts
-- [ ] Remove the Aquarius pools before anything lets HITZ out of them (stale 27% gap)
-- [ ] Seed at the market cross-rate; check `rate(XLM, USDC)` within 0.1%,
-      `dislocation` zero and a 1% fee in `pools()`
+- [ ] Testnet run of steps A-E with real Aquarius contracts (skipped: steps
+      A-D ran on mainnet after the rehearsal against the live bytecode)
+- [x] Remove the Aquarius pools before anything lets HITZ out of them (stale 27% gap)
+- [x] Seed at the market cross-rate; check `rate(XLM, USDC)` within 0.1%,
+      `dislocation` zero and a 1% fee in `pools()` (10% soft-launch seed)
+- [ ] Deposit the remaining withdrawn liquidity (V-1: at the soft-launch
+      depth a $20 trade pays the 10% cap)
 - [ ] Finish or move the reparation campaign, then remove the sponsor router
 - [ ] Prune the registry to the vault; renounce passes its guard
 
 ### Arbitrage and integration
 
 - [x] Integration guide: [`contracts/sovereign-vault/INTEGRATION.md`](contracts/sovereign-vault/INTEGRATION.md),
-      with its patterns tested in `tests/integration_guide.rs`. Fill in the
-      vault address at deployment.
+      with its patterns tested in `tests/integration_guide.rs`, and the vault
+      address filled in.
 - [ ] Send it to the four operators behind 92% of past volume (by the
       account that deployed each bot): `GA6RKSBP…` (`CDCAZUHZ…`,
       `CC6QAV7J…`), `GDJMOSUF…` (`CBNVK5PE…`), `GDXGYASW…` (`CDWMA5P5…`),
@@ -424,14 +433,18 @@ Starting backing $2,787; holding it untouched ends at $3,047.
 
 ### Product
 
-- [ ] Swap UI: show fee and price impact from `quote`, warn above 2%, explain
-      vaulting (L ≈ $0.31 today) before purchase
-- [ ] Update `LEGAL.md` for the vault: no withdrawals, the fee, the upgrade
+- [x] Swap UI: per-hop fee and price impact from the exact fee math,
+      confirmed by `quote`; warns above 1.5% and at the cap; explains vaulting
+      before purchase, judged against the L the purchase leaves
+- [x] Vaulted accounts: sell into the vault to release (the Vault tab
+      computes the smallest sale)
+- [x] Update `LEGAL.md` for the vault: no withdrawals, the fee, the upgrade
       timelock, renouncing
 
 ### Data and monitoring
 
-- [ ] Ingest vault events; move the price and liquidity cards to the vault
+- [x] Ingest vault events; move the price and liquidity cards to the vault
+      (deploy the Worker to take effect)
 - [ ] Alerts: `integrity_drift_event`; `upgrade_proposed` on both contracts;
       `listing_proposed` on the vault; registry and admin changes; no HITZ or
       vault events for 24 hours (the Oct 2 outage went unnoticed for 17 days)

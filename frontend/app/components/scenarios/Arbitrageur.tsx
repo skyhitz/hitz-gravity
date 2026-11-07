@@ -32,7 +32,9 @@ export default function Arbitrageur({ publicKey }: Props) {
   return (
     <div className="space-y-6">
       <p className="text-muted text-sm leading-relaxed">
-        Cross-DEX balancing: transfer between pools. Pool-to-pool transfers have neutral mass impact. Test allowances and delegated transfers here.
+        Pool-to-pool transfers (the treasury and the vault, say) leave Total Mass unchanged. Test allowances and delegated
+        transfers here. Arbitrage against other venues happens in the Sovereign Vault itself; bots follow
+        contracts/sovereign-vault/INTEGRATION.md.
       </p>
 
       <div className="space-y-3">

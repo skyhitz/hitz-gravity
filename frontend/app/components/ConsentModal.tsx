@@ -2,7 +2,9 @@
 
 import { useState, useRef, useEffect } from "react";
 
-export const CONSENT_KEY = "gravity-hitz-consent-v1";
+// v2 (Nov 4, 2026): the terms now cover the Sovereign Vault (fees, no
+// withdrawals, timelocked admin powers), so everyone accepts them again.
+export const CONSENT_KEY = "gravity-hitz-consent-v2";
 
 interface Props {
   onAccept: () => void;
@@ -13,7 +15,7 @@ export default function ConsentModal({ onAccept }: Props) {
   const [hasScrolled, setHasScrolled] = useState(false);
   const [checks, setChecks] = useState({
     vault: false,
-    sacrifice: false,
+    trading: false,
     waiver: false,
   });
 
@@ -42,7 +44,7 @@ export default function ConsentModal({ onAccept }: Props) {
     setChecks((p) => ({ ...p, [k]: !p[k] }));
   };
 
-  const allChecked = checks.vault && checks.sacrifice && checks.waiver;
+  const allChecked = checks.vault && checks.trading && checks.waiver;
 
   const handleAccept = () => {
     localStorage.setItem(CONSENT_KEY, "true");
@@ -92,36 +94,40 @@ export default function ConsentModal({ onAccept }: Props) {
                 L = ⌊ √( S × 10<sup>7</sup> ) ⌋
               </div>
               <p className="text-muted leading-relaxed">
-                where <span className="font-mono text-purple">S</span> is the real-time
-                sum of balances across approved liquidity pools. Any account whose HITZ
-                balance exceeds L is{" "}
-                <strong className="text-red">automatically and permanently Vaulted</strong>{" "}
-                . Outbound transfers are blocked at the contract level.{" "}
+                where <span className="font-mono text-purple">S</span> is the HITZ held
+                by registered pools: the Sovereign Vault and the treasury. Any account
+                whose HITZ balance exceeds L is{" "}
+                <strong className="text-red">automatically Vaulted</strong>: it can send
+                HITZ only to a registered pool, such as by selling it into the vault.{" "}
                 <strong className="text-foreground">
                   This is intentional, designed behavior, not a bug.
                 </strong>
               </p>
               <p className="text-muted text-xs leading-relaxed mt-2">
-                L is dynamic. It rises with liquidity and falls when liquidity is
-                withdrawn. An account safe today may be Vaulted tomorrow. The developers
-                cannot override, bypass, or reverse any Vaulted state.
+                L is dynamic. It rises as HITZ enters registered pools and falls as it
+                leaves them, including whenever anyone buys HITZ from the vault, and a
+                purchase is judged against the L it leaves behind. An account safe today
+                may be Vaulted tomorrow. The developers cannot override, bypass, or
+                reverse any Vaulted state.
               </p>
             </LegalSection>
 
             <Divider />
 
-            <LegalSection number="II" title="The Sacrifice Protocol">
+            <LegalSection number="II" title="Releasing a Vault">
               <p className="text-muted leading-relaxed">
-                The sole exit from a Vault is the{" "}
-                <strong className="text-orange">Sacrifice</strong>, a direct voluntary
-                transfer of HITZ to an approved liquidity pool.
+                A Vaulted balance comes down by moving HITZ into a registered pool:{" "}
+                <strong className="text-orange">selling it into the Sovereign Vault</strong>{" "}
+                (paid in XLM or USDC, minus the vault&apos;s fee) or a{" "}
+                <strong className="text-orange">Sacrifice</strong> (a transfer with
+                nothing back).
               </p>
               <div className="mt-3 space-y-1.5 text-xs text-muted">
                 {[
-                  "A Sacrifice is permanent, irreversible, and non-refundable.",
-                  "Sacrificed tokens are transferred to the pool with no return mechanism.",
+                  "Sales and Sacrifices are permanent and irreversible.",
+                  "HITZ sent to the vault outside a swap or deposit is lost for good.",
                   "No guarantee any amount will reduce balance below L.",
-                  "Developers have zero ability to refund or compensate sacrificed tokens.",
+                  "Developers have zero ability to refund or compensate.",
                 ].map((t) => (
                   <div key={t} className="flex items-start gap-2">
                     <span className="text-orange mt-0.5 shrink-0">·</span>
@@ -133,13 +139,31 @@ export default function ConsentModal({ onAccept }: Props) {
 
             <Divider />
 
-            <LegalSection number="III" title="Assumption of Risk">
+            <LegalSection number="III" title="The Sovereign Vault">
+              <div className="space-y-1.5 text-xs text-muted">
+                {[
+                  "Every pass through a pool pays 1% to 10%, rising while a trade leaves one asset dislocated against another.",
+                  "The vault's prices can differ from other markets and move before your trade executes; your slippage limit is the only bound.",
+                  "Deposits earn no shares and can never be withdrawn.",
+                  "Each listed asset carries its issuer's risk (freezes, clawbacks).",
+                ].map((t) => (
+                  <div key={t} className="flex items-start gap-2">
+                    <span className="text-orange mt-0.5 shrink-0">·</span>
+                    <span>{t}</span>
+                  </div>
+                ))}
+              </div>
+            </LegalSection>
+
+            <Divider />
+
+            <LegalSection number="IV" title="Assumption of Risk">
               <div className="space-y-2 text-xs text-muted">
                 {[
-                  { head: "Smart Contract Risk", body: "Experimental, unaudited. Bugs may cause total, irrecoverable loss.", color: "text-red" },
+                  { head: "Smart Contract Risk", body: "Experimental; the token and the vault are not independently audited. Bugs may cause total, irrecoverable loss.", color: "text-red" },
                   { head: "Infrastructure Risk", body: "Depends on Stellar Network and Soroban VM. Outages beyond developer control.", color: "text-orange" },
                   { head: "Market & Regulatory Risk", body: "HITZ may have no value. You are solely responsible for legal compliance.", color: "text-yellow" },
-                  { head: "Upgrade Risk", body: "An admin upgrade function exists until immutable deployment.", color: "text-muted" },
+                  { head: "Upgrade & Admin Risk", body: "Both contracts can be upgraded after a public 7-day timelock; the vault's admin can list new assets the same way.", color: "text-muted" },
                 ].map(({ head, body, color }) => (
                   <div key={head} className="flex items-start gap-2">
                     <span className={`${color} shrink-0 mt-0.5`}>▸</span>
@@ -151,7 +175,7 @@ export default function ConsentModal({ onAccept }: Props) {
 
             <Divider />
 
-            <LegalSection number="IV" title="Class Action Waiver">
+            <LegalSection number="V" title="Class Action Waiver">
               <p className="text-muted text-xs leading-relaxed">
                 <strong className="text-foreground uppercase text-[11px] tracking-wider">
                   By using this software, you irrevocably waive your right to participate
@@ -164,10 +188,11 @@ export default function ConsentModal({ onAccept }: Props) {
 
             <Divider />
 
-            <LegalSection number="V" title="No Financial Advice">
+            <LegalSection number="VI" title="No Financial Advice">
               <p className="text-muted text-xs leading-relaxed">
                 The <strong className="text-foreground">Event Horizon (L)</strong> and all
-                other protocol metrics are technical parameters, not investment advice,
+                other protocol metrics, including prices, quotes, fees and liquidity, are
+                technical figures, not investment advice,
                 financial guidance, or a recommendation to buy, hold, or transfer any asset.
                 The Protocol is provided &quot;as is,&quot; without warranty of any kind.
               </p>
@@ -198,12 +223,12 @@ export default function ConsentModal({ onAccept }: Props) {
           <ConsentCheck
             checked={checks.vault}
             onChange={() => toggle("vault")}
-            label="I acknowledge that exceeding the Event Horizon (L) will result in my account being Vaulted, with outbound transfers permanently blocked."
+            label="I acknowledge that exceeding the Event Horizon (L) will Vault my account: it can then send HITZ only to a registered pool, such as by selling into the vault."
           />
           <ConsentCheck
-            checked={checks.sacrifice}
-            onChange={() => toggle("sacrifice")}
-            label="I understand that un-vaulting requires a non-refundable Sacrifice, a permanent, irreversible loss of tokens with no compensation."
+            checked={checks.trading}
+            onChange={() => toggle("trading")}
+            label="I understand that trades with the Sovereign Vault pay a 1% to 10% fee, that sales, Sacrifices and deposits are irreversible, and that deposits can never be withdrawn."
           />
           <ConsentCheck
             checked={checks.waiver}

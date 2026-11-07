@@ -44,7 +44,7 @@ export interface EcoHolder {
   archived: boolean;
   /** ms epoch of the balance entry's last observed write, if known. */
   lastActive: number | null;
-  /** Pools only, e.g. "Aqua · HITZ/XLM". */
+  /** Pools only, e.g. "Sovereign Vault · XLM, USDC". */
   label?: string;
 }
 

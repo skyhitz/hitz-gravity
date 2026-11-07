@@ -21,7 +21,8 @@
 
 import * as StellarSdk from "@stellar/stellar-sdk";
 import { CONTRACT_ID, RPC_URL, getAdmin } from "./stellar";
-import { HITZ_ADDRESS, discoverPoolsFromRegistry, getTokenInfos } from "./aqua";
+import { VAULT_ID, readPools } from "./vault";
+import { getTokenInfos } from "./tokens";
 
 const server = new StellarSdk.rpc.Server(RPC_URL);
 
@@ -205,38 +206,33 @@ export async function readHolderStates(addresses: string[]): Promise<HolderState
 // ─── Pool labels ─────────────────────────────────────────────────────────────
 
 export interface PoolLabel {
-  /** e.g. "Aqua · HITZ/XLM", "Admin account". */
+  /** e.g. "Sovereign Vault · XLM, USDC", "Treasury (admin)". */
   title: string;
 }
 
 /**
- * Human labels for registered pools, derived from chain state: the pool's
- * own `get_tokens()`, each token's `symbol()`, and whether the Aqua router
- * indexes it. Classic G-accounts can be registered as pools too (bootstrap
- * reserves); those are labelled as accounts.
+ * Human labels for registered pools, from chain state: the Sovereign Vault
+ * (named with the assets it lists), the treasury (the admin account, a
+ * registered pool so its HITZ counts as mass), other classic accounts and
+ * any other pool contract.
  */
 export async function describePools(pools: string[]): Promise<Map<string, PoolLabel>> {
   const out = new Map<string, PoolLabel>();
-  const [infos, admin] = await Promise.all([
-    discoverPoolsFromRegistry(pools).catch(() => []),
-    getAdmin().catch(() => null),
-  ]);
-  const symbols = await getTokenInfos(infos.flatMap((p) => [p.tokenA, p.tokenB]));
-
+  const admin = await getAdmin().catch(() => null);
+  let vaultAssets = "";
+  if (pools.includes(VAULT_ID)) {
+    const states = await readPools().catch(() => []);
+    const infos = await getTokenInfos(states.map((p) => p.asset));
+    vaultAssets = states.map((p) => infos.get(p.asset)?.symbol ?? "?").join(", ");
+  }
   for (const address of pools) {
-    if (address.startsWith("G")) {
-      out.set(address, { title: address === admin ? "Admin account" : "Classic account" });
-      continue;
-    }
-    const info = infos.find((p) => p.address === address);
-    if (!info) {
+    if (address === VAULT_ID) {
+      out.set(address, { title: vaultAssets ? `Sovereign Vault · ${vaultAssets}` : "Sovereign Vault" });
+    } else if (address.startsWith("G")) {
+      out.set(address, { title: address === admin ? "Treasury (admin)" : "Classic account" });
+    } else {
       out.set(address, { title: "Pool contract" });
-      continue;
     }
-    const other = info.tokenA === HITZ_ADDRESS ? info.tokenB : info.tokenA;
-    const pair = `HITZ/${symbols.get(other)?.symbol ?? "?"}`;
-    const venue = info.poolIndex.length > 0 ? "Aqua" : "Pool";
-    out.set(address, { title: `${venue} · ${pair}` });
   }
   return out;
 }

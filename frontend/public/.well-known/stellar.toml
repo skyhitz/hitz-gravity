@@ -37,16 +37,18 @@ is_asset_anchored = false
 is_unlimited = false
 max_number = 21000000
 
-# Asset: HITZ Token (Soroban SEP-41 contract — Gravity)
-# Soroban-native HITZ implementing the SEP-41 token interface, used by the
-# Gravity vault and Smart Swap on https://skyhitz.io.
+# Asset: HITZ Token (Soroban SEP-41 contract, Gravity)
+# Soroban-native HITZ implementing the SEP-41 token interface. It trades on
+# its own exchange, the HITZ Sovereign Vault
+# (CDEISYZM526FZJ4PDWNVKD7UHXFO4ATT46K47YTUQAOLWZQV64ANNBWU), on
+# https://skyhitz.io.
 [[CURRENCIES]]
 code = "HITZ"
 contract = "CBAPZAZNNB4X3VPXV2LYA5RMV7XHXIVREES2GG7R5GUXDZ4R4CKOY4EU"
 display_decimals = 7
 name = "Gravity HITZ"
-desc = "Soroban-native HITZ token implementing the SEP-41 token interface with gravity-based vault mechanics."
-conditions = "Native utility token of the Skyhitz Gravity platform; staking, swaps, and rewards."
+desc = "Soroban-native HITZ token implementing the SEP-41 token interface. Any account holding more than the Event Horizon L = sqrt(S x 10^7) is vaulted and can only send HITZ to a registered pool. Trades on the HITZ Sovereign Vault (CDEISYZM526FZJ4PDWNVKD7UHXFO4ATT46K47YTUQAOLWZQV64ANNBWU) against XLM and USDC."
+conditions = "Native utility token of the Skyhitz Gravity platform. Holdings above the Event Horizon are vaulted. Vault trades pay a 1% to 10% fee. See https://skyhitz.io/whitepaper and https://github.com/skyhitz/hitz-gravity/blob/main/LEGAL.md."
 image = "https://skyhitz.io/icon.png"
 is_asset_anchored = false
 is_unlimited = false

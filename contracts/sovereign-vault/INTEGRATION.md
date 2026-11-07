@@ -22,13 +22,15 @@ call one contract.
 
 | | Contract |
 |---|---|
-| Sovereign Vault | published at deployment |
+| Sovereign Vault | `CDEISYZM526FZJ4PDWNVKD7UHXFO4ATT46K47YTUQAOLWZQV64ANNBWU` |
 | HITZ | `CBAPZAZNNB4X3VPXV2LYA5RMV7XHXIVREES2GG7R5GUXDZ4R4CKOY4EU` |
 | XLM (native asset contract) | `CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA` |
 | USDC (Circle, asset contract) | `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75` |
 
 `hitz()` returns the HITZ contract and `assets()` the listed assets in
-listing order, so you can verify them and pick up new listings.
+listing order, so you can verify them and pick up new listings. The vault
+runs the `sovereign-vault-v1.0.0` release (Wasm `7dea47b2…`), verified on
+Stellar Expert against its source; it has traded since November 4, 2026.
 
 Units: amounts are in each token's own units (7 decimals for HITZ, XLM and
 USDC). Exchange rates and fees are 9-decimal fixed point (1.0 =

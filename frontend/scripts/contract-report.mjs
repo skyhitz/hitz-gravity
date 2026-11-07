@@ -68,13 +68,22 @@ const KNOWN_CONTRACTS = {
     label: "registered HITZ router (secondary)",
     kind: "router",
   },
-  // Aqua AMM pools paired with HITZ — frequent pass-through endpoints.
+  // HITZ's own exchange since 2026-11-04: one pool per trusted asset
+  // (XLM, USDC), registered as a HITZ pool. Swaps through it move HITZ
+  // between the vault and the trader.
+  CDEISYZM526FZJ4PDWNVKD7UHXFO4ATT46K47YTUQAOLWZQV64ANNBWU: {
+    label: "HITZ Sovereign Vault",
+    kind: "pool",
+  },
+  // Aquarius AMM pools paired with HITZ until 2026-11-03, when they were
+  // removed from the registry and their liquidity withdrawn. Kept so
+  // earlier months still read right.
   CCCDPF74BFBIHCBWCA3QX5R2UULH4VSJFOK6KL44KDKJS75ZKJJYUSPH: {
-    label: "Aqua AMM pool (HITZ pair)",
+    label: "Aquarius HITZ/XLM pool (retired 2026-11-03)",
     kind: "pool",
   },
   CBMOEJUOKI72AXRPEQCRYSWDUBMI2LZEYVFJUTB256FO3WYSYSZI5F5A: {
-    label: "Aqua AMM pool (HITZ pair)",
+    label: "Aquarius HITZ/USDC pool (retired 2026-11-03)",
     kind: "pool",
   },
 
@@ -665,11 +674,13 @@ async function generateReport(yyyymm = currentYM()) {
   const hitzRouters = new Set();
   for (const e of allEvents) {
     if (e.ts >= endISO) continue;
+    // Data is `{ registered, wasm_hash }`; a bare boolean in older rows.
+    const on = e.data !== null && typeof e.data === "object" ? e.data.registered === true : e.data === true;
     if (e.name === "pool_registered") {
-      if (e.data === true) hitzPools.add(e.topics[0]);
+      if (on) hitzPools.add(e.topics[0]);
       else hitzPools.delete(e.topics[0]);
     } else if (e.name === "router_registered") {
-      if (e.data === true) hitzRouters.add(e.topics[0]);
+      if (on) hitzRouters.add(e.topics[0]);
       else hitzRouters.delete(e.topics[0]);
     }
   }

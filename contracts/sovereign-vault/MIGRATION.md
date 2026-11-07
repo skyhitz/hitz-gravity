@@ -2,7 +2,37 @@
 
 Moves HITZ liquidity from the two Aquarius pools into the Sovereign Vault,
 installs the new token code, and ends with a final registry and a renounced
-admin. Every step below is rehearsed by
+admin.
+
+## Status: steps A to D done on Nov 3-4, 2026 (UTC)
+
+| Step | Call | Ledger | Transaction |
+|---|---|---|---|
+| upload | token release Wasm `af53185d…` | 65290884 | `fa0366a8…` |
+| upload | vault release Wasm `7dea47b2…` | 65290894 | |
+| deploy | vault `CDEISYZM…NNBWU`, `(GCAETBNB…, HITZ, [XLM, USDC])` | 65290898 | |
+| A1 | `remove_pool_address(CBMOEJUO…)` (Aquarius HITZ/USDC) | 65292464 | [`103f2d1d…`](https://stellar.expert/explorer/public/tx/103f2d1dfb3eec09e0693ef867fefe4ae89854c0d9734f4a8e23a68302702012) |
+| A2 | `remove_pool_address(CCCDPF74…)` (Aquarius HITZ/XLM) | 65292511 | [`d06321bd…`](https://stellar.expert/explorer/public/tx/d06321bd8e677207673ac62e6d9083ab4bb640a3d2b6459ec8b4bc9ca9682f49) |
+| B1 | withdraw 100% of the HITZ/XLM shares: 57,697,978.70 HITZ + 10,859.06 XLM | 65292557 | [`29b96326…`](https://stellar.expert/explorer/public/tx/29b96326b717b7065ea3dcaef916d4879f46705e88be0a4eb93bbc2b110ee11d) |
+| B2 | withdraw 100% of the HITZ/USDC shares: 30,727,048.10 HITZ + 1,273.33 USDC | 65292601 | [`ef6eb6e4…`](https://stellar.expert/explorer/public/tx/ef6eb6e4bdc6c2fcececaab284c3cf8141c01056dc0f32f625b837b7f05e3ea5) |
+| C | `upgrade(af53185d…)`: token v2.0.0, same address | 65293237 | [`b7912b4b…`](https://stellar.expert/explorer/public/tx/b7912b4befbce045f956e1f8ed2ab77b608ad0426e6d74e634a161a952ad3f57) |
+| D1 | `register_pool_address(vault)` | 65293292 | [`3b4e9501…`](https://stellar.expert/explorer/public/tx/3b4e9501d828f309578d0948b30f2596b7f5aa04f9e8d57ef4dbd0468e1899ff) |
+| D2 | `seed(XLM, 5,097,394.18 HITZ, 1,085.91 XLM)` | 65293357 | [`ce519fd0…`](https://stellar.expert/explorer/public/tx/ce519fd0872dff7bcce540c74ffacc04a5a8cabd4c7eb45c31f7b14d32284e8c) |
+| D3 | `seed(USDC, 3,745,108.50 HITZ, 127.33 USDC)` | 65293433 | [`24c4c4f6…`](https://stellar.expert/explorer/public/tx/24c4c4f6374a452afac22eaa7f3794c1193590ca3ba7c729b068c2014ab00f6c) |
+
+The seed was a soft launch: 10% of what came out of Aquarius, at XLM =
+$0.1596, so HITZ entered the vault at $0.0000340. The other 90%, and the
+admin's own HITZ, stays in the admin wallet (a registered pool, so it is
+still Total Mass) until it is deposited. Verified right after: the token runs
+`af53185d…` at the same address, `admin()` is `GCAETBNB…`, no pending
+upgrade, S = 98,388,926.92 HITZ, L = 9,919.12 HITZ, `list_pools` is the admin
+wallet and the vault, `rate(XLM, USDC)` = 0.1596, `dislocation` 0 and a 1%
+fee on both pools. Stellar Expert verifies both contracts against commit
+`2807ed1`. Step E is still ahead.
+
+## Rehearsal
+
+Every step below is rehearsed by
 [`tests/mainnet_migration.rs`](tests/mainnet_migration.rs), which starts
 from the token bytecode that is live on mainnet today
 (`befa64d9…`, committed as `contracts/gravity-token/test_fixtures/gravity_token_mainnet_v1.0.0.wasm`).
@@ -117,10 +147,15 @@ another).
 
 ## After the migration
 
-- Ingest vault events (`swap`, `hop`, `deposit`, `seeded`, `listed`) and
-  point the price and liquidity cards at the vault instead of the Aquarius
-  pools.
-- Monitor `integrity_drift_event` and `upgrade_proposed` on both
+- [x] Ingest vault events (`seeded`, `hop`, `deposit`) and point the price
+  and liquidity cards at the vault instead of the Aquarius pools: the
+  Worker cron reads them from Stellar Expert into D1 (pool keys
+  `<vault>:<asset>`), and the app's swap, release card and Monitor read the
+  vault directly.
+- [ ] Deposit the rest of the withdrawn liquidity: at the soft-launch depth
+  a $20 trade pays the 10% cap (the Admin tab has a deposit tool; from the
+  admin wallet, HITZ moves pool to pool and S doesn't change).
+- [ ] Monitor `integrity_drift_event` and `upgrade_proposed` on both
   contracts, `listing_proposed` on the vault, and silence (no HITZ events
   for 24 h).
 

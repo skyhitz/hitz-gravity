@@ -29,14 +29,14 @@ export default function MonitorStatCards() {
         title="Total Mass (S)"
         value={fmtFixed(totalMass, 2)}
         unit="HITZ"
-        sub="Sum of balances in regular accounts and audited pools. Grows only when tokens are sacrificed."
+        sub="HITZ held by registered pools: the Sovereign Vault and the treasury. Grows when HITZ is sold or deposited into the vault, shrinks when it's bought out."
         dotColor="var(--purple)"
       />
       <StatCard
         title="Event Horizon (L)"
         value={fmtFixed(safetyLimit, 4)}
         unit="HITZ"
-        sub="Per-account cap. Balances beyond this are Vaulted, transfers out blocked until L rises."
+        sub="√(S × 10⁷), the per-account cap. Accounts holding more are Vaulted: they can only send HITZ to a registered pool, like selling into the vault, until they're back under L."
         dotColor="var(--accent)"
       />
     </div>

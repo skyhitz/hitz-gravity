@@ -33,15 +33,21 @@ function fromScVal(val: StellarSdk.xdr.ScVal): unknown {
 
 // ─── Read-only calls (no signing) ─────────────────────
 
-async function simulateCall(
+/** Any existing account works as the source of a read-only simulation. */
+const SIM_SOURCE = "GBZXN7PIRZGNMHGA7MUUUF4GWPY5AYPV6LY4UV2GL6VJGIQRXFDNMADI";
+
+/**
+ * Simulate a read-only call on any contract and return its result. Nothing
+ * is signed or sent. Simulation restores archived entries on its own, so a
+ * view never fails for archival.
+ */
+export async function simulate(
+  contractId: string,
   method: string,
   args: StellarSdk.xdr.ScVal[] = []
 ): Promise<StellarSdk.xdr.ScVal> {
-  const account = new StellarSdk.Account(
-    "GBZXN7PIRZGNMHGA7MUUUF4GWPY5AYPV6LY4UV2GL6VJGIQRXFDNMADI",
-    "0"
-  );
-  const contract = new StellarSdk.Contract(CONTRACT_ID);
+  const account = new StellarSdk.Account(SIM_SOURCE, "0");
+  const contract = new StellarSdk.Contract(contractId);
   const tx = new StellarSdk.TransactionBuilder(account, {
     fee: "100",
     networkPassphrase: NETWORK_PASSPHRASE,
@@ -62,6 +68,10 @@ async function simulateCall(
   return result.retval;
 }
 
+function simulateCall(method: string, args: StellarSdk.xdr.ScVal[] = []): Promise<StellarSdk.xdr.ScVal> {
+  return simulate(CONTRACT_ID, method, args);
+}
+
 export async function getSafetyLimit(): Promise<bigint> {
   const val = await simulateCall("safety_limit");
   return BigInt(fromScVal(val) as string | number | bigint);
@@ -77,10 +87,24 @@ export async function getBalance(address: string): Promise<bigint> {
   return BigInt(fromScVal(val) as string | number | bigint);
 }
 
+/**
+ * The stored vault flag. It's a cache: the token re-syncs it against the
+ * live L on the account's next transfer, so prefer `isActuallyVaulted`.
+ */
 export async function isAccountVaulted(address: string): Promise<boolean> {
   const val = await simulateCall("is_account_vaulted", [
     toScVal("address", address),
   ]);
+  return fromScVal(val) as boolean;
+}
+
+/**
+ * Whether the account is stuck right now: it holds more than the live L and
+ * isn't a registered pool or router. This is what the token's sender gate
+ * enforces, whatever the stored flag says.
+ */
+export async function isActuallyVaulted(address: string): Promise<boolean> {
+  const val = await simulateCall("is_actually_vaulted", [toScVal("address", address)]);
   return fromScVal(val) as boolean;
 }
 
@@ -127,17 +151,10 @@ export async function getSymbol(): Promise<string> {
 }
 
 /**
- * Read the contract's current admin address from instance storage.
+ * The token's admin (`admin()` view), or null once the role is renounced.
  *
- * The token contract doesn't expose a public `get_admin()` method, so we
- * go one layer deeper: contract instance data lives in a single ledger
- * entry keyed by `scvLedgerKeyContractInstance`, whose value is an
- * `ScContractInstance` containing an `ScMap` of all instance-storage keys.
- * We walk that map looking for `DataKey::Admin`, which Soroban's Rust
- * contractenum derive encodes as `scvVec([scvSymbol("Admin")])`.
- *
- * Cached in-module after the first successful read — the admin changes so
- * rarely that re-polling on every render-cycle would be wasteful.
+ * Cached in-module after the first successful read: the admin changes so
+ * rarely that re-polling on every render cycle would be wasteful.
  */
 let adminCache: Promise<string | null> | null = null;
 
@@ -145,43 +162,30 @@ export async function getAdmin(): Promise<string | null> {
   if (adminCache) return adminCache;
   adminCache = (async () => {
     try {
-      const key = StellarSdk.xdr.LedgerKey.contractData(
-        new StellarSdk.xdr.LedgerKeyContractData({
-          contract: StellarSdk.Address.fromString(CONTRACT_ID).toScAddress(),
-          key: StellarSdk.xdr.ScVal.scvLedgerKeyContractInstance(),
-          durability: StellarSdk.xdr.ContractDataDurability.persistent(),
-        })
-      );
-      const res = await server.getLedgerEntries(key);
-      if (res.entries.length === 0) return null;
-      const entry = res.entries[0];
-      const contractData = entry.val.contractData().val();
-      if (contractData.switch() !== StellarSdk.xdr.ScValType.scvContractInstance()) {
-        return null;
-      }
-      const instance = contractData.instance();
-      const storage = instance.storage();
-      if (!storage) return null;
-      for (const ent of storage) {
-        const k = ent.key();
-        // DataKey::Admin is `scvVec([scvSymbol("Admin")])`.
-        if (k.switch() !== StellarSdk.xdr.ScValType.scvVec()) continue;
-        const vec = k.vec();
-        if (!vec || vec.length !== 1) continue;
-        const first = vec[0];
-        if (first.switch() !== StellarSdk.xdr.ScValType.scvSymbol()) continue;
-        if (first.sym().toString() !== "Admin") continue;
-        const val = ent.val();
-        if (val.switch() !== StellarSdk.xdr.ScValType.scvAddress()) continue;
-        return StellarSdk.Address.fromScAddress(val.address()).toString();
-      }
-      return null;
+      return ((fromScVal(await simulateCall("admin")) as string | null | undefined) ?? null);
     } catch {
       adminCache = null; // allow retry next call
       return null;
     }
   })();
   return adminCache;
+}
+
+export interface PendingUpgrade {
+  /** Hex Wasm hash. */
+  wasmHash: string;
+  /** Unix seconds from which `upgrade` can run. */
+  eta: number;
+}
+
+/** A proposed upgrade waiting out its 7-day timelock, if any. Works for the token and the vault. */
+export async function getPendingUpgrade(contractId: string = CONTRACT_ID): Promise<PendingUpgrade | null> {
+  const native = fromScVal(await simulate(contractId, "pending_upgrade")) as
+    | { wasm_hash: Uint8Array; eta: bigint }
+    | null
+    | undefined;
+  if (!native) return null;
+  return { wasmHash: Buffer.from(native.wasm_hash).toString("hex"), eta: Number(native.eta) };
 }
 
 // ─── Write calls (require Freighter signing) ──────────
@@ -433,16 +437,6 @@ export async function removeRouterAddress(
 ): Promise<TxResult> {
   return buildAndSend(publicKey, "remove_router_address", [
     toScVal("address", address),
-  ], signTransaction);
-}
-
-export async function checkRelease(
-  publicKey: string,
-  target: string,
-  signTransaction: (xdr: string, opts: { networkPassphrase: string }) => Promise<string>
-): Promise<TxResult> {
-  return buildAndSend(publicKey, "check_release", [
-    toScVal("address", target),
   ], signTransaction);
 }
 
