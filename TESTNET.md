@@ -1,4 +1,9 @@
-# HITZ Gravity Token — Testnet Deployment
+# HITZ Gravity Token: Testnet Deployment
+
+> **Historical record.** This is the April 2026 testnet deployment. Mainnet
+> now runs token v2.0.0 (`af53185d…`) and the Sovereign Vault
+> (`CDEISYZM…NNBWU`); see [`README.md`](./README.md) and
+> [`MIGRATION.md`](./contracts/sovereign-vault/MIGRATION.md).
 
 **Date:** 2026-04-25
 **Network:** Stellar Testnet

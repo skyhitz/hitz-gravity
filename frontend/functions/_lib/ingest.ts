@@ -8,8 +8,10 @@
 //   1. HITZ contract events  — Soroban RPC getEvents → hitz_events
 //   2. Report enrichment     — Horizon tx envelopes → tx_info,
 //                              Stellar Expert contract metadata → contract_info
-//   3. Pool registry         — list_pools → get_tokens → quote name() → pools
-//   4. Pool reserves         — Stellar Expert pool events (update_reserves)
+//   3. Pool registry         : list_pools → the Sovereign Vault's assets() (or an
+//                              AMM's get_tokens) → quote name() → pools
+//   4. Pool reserves         : Stellar Expert events: the vault's seeded / hop /
+//                              deposit, or an AMM's update_reserves
 //   5. Quote prices          — Horizon hourly VWAP vs USDC
 //   6. Price series          — recompute changed hours → price_hourly + snapshot
 //   7. Liquidity             — depth, volume, fees, TVL trend (last 30 days) → snapshot
@@ -24,9 +26,12 @@ import {
   computeHours,
   decodeReservesBody,
   hourOf,
+  isVaultPool,
   mergeSnapshot,
   orientReserves,
+  poolContract,
   summarizeLiquidity,
+  vaultPoolKey,
   type LiquiditySnapshot,
   type PoolMeta,
   type PriceSnapshot,
@@ -350,35 +355,42 @@ async function syncPools(env: Env) {
   const registered = new Set(((await simulateView(env, env.HITZ_CONTRACT_ID, "list_pools")) as string[]) ?? []);
   const { results: known } = await env.DB.prepare("SELECT * FROM pools").all<PoolRow>();
   const knownSet = new Set(known.map((p) => p.address));
+  const knownVaults = new Set(known.filter((p) => isVaultPool(p.address)).map((p) => poolContract(p.address)));
 
-  // New registrations that are AMMs pairing HITZ. Classic G-accounts (and
-  // contracts without get_tokens) count toward mass but have no price.
+  // Registered contracts: a Sovereign Vault (it answers `hitz()` with our
+  // token) contributes one pool per listed asset, re-read every run so a new
+  // listing shows up; an AMM pairing HITZ is one pool. Classic G-accounts
+  // (the treasury) count toward mass but have no price.
+  const vaults: string[] = [];
   for (const address of registered) {
-    if (knownSet.has(address) || !address.startsWith("C")) continue;
+    if (!address.startsWith("C") || knownSet.has(address)) continue;
     try {
+      const assets = await vaultAssets(env, address, knownVaults.has(address));
+      if (assets) {
+        vaults.push(address);
+        for (const asset of assets) {
+          const key = vaultPoolKey(address, asset);
+          if (knownSet.has(key)) continue;
+          const row = await poolRow(env, key, 0, asset);
+          await insertMany(env.DB, "INSERT OR REPLACE", "pools", Object.keys(row), [Object.values(row)]);
+          known.push(row);
+          knownSet.add(key);
+        }
+        continue;
+      }
       const tokens = (await simulateView(env, address, "get_tokens")) as string[];
       const hitzIndex = tokens.indexOf(env.HITZ_CONTRACT_ID);
       if (tokens.length !== 2 || hitzIndex < 0) continue;
-      const quoteToken = tokens[1 - hitzIndex];
-      const name = String(await simulateView(env, quoteToken, "name"));
-      const q = classifyQuoteName(name, env.USDC_ISSUER);
-      const row: PoolRow = {
-        address,
-        hitz_index: hitzIndex,
-        quote_token: quoteToken,
-        quote_kind: q.kind,
-        quote_id: q.quoteId,
-        label: `HITZ/${q.symbol}`,
-        active: 1,
-      };
+      const row = await poolRow(env, address, hitzIndex, tokens[1 - hitzIndex]);
       await insertMany(env.DB, "INSERT OR REPLACE", "pools", Object.keys(row), [Object.values(row)]);
       known.push(row);
+      knownSet.add(address);
     } catch (err) {
       console.warn(`[ingest] could not inspect registered pool ${address}`, err);
     }
   }
   for (const p of known) {
-    const active = registered.has(p.address) ? 1 : 0;
+    const active = registered.has(poolContract(p.address)) ? 1 : 0;
     if (p.active !== active) {
       p.active = active;
       await env.DB.prepare("UPDATE pools SET active = ? WHERE address = ?").bind(active, p.address).run();
@@ -386,15 +398,22 @@ async function syncPools(env: Env) {
   }
 
   let changedFrom: number | null = null;
+  const bump = (ts: number) => {
+    changedFrom = changedFrom === null ? hourOf(ts) : Math.min(changedFrom, hourOf(ts));
+  };
   const added: Record<string, number> = {};
-  for (const pool of known.filter((p) => p.active)) {
+
+  for (const vault of vaults) {
+    const pools = new Map(known.filter((p) => p.active && poolContract(p.address) === vault).map((p) => [p.address, p]));
+    const n = await syncVaultReserves(env, vault, pools, bump);
+    for (const [label, count] of Object.entries(n)) added[label] = (added[label] ?? 0) + count;
+  }
+
+  for (const pool of known.filter((p) => p.active && !isVaultPool(p.address))) {
     let cursor = await getCursor(env.DB, `pool:${pool.address}`);
     added[pool.label] = 0;
     for (let page = 0; page < POOL_PAGES; page++) {
-      const url = `${STELLAR_EXPERT}/contract/${pool.address}/events?order=asc&limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
-      const res = await fetch(url, { headers: { Accept: "application/json" } });
-      if (!res.ok) throw new Error(`Stellar Expert HTTP ${res.status} for ${pool.address}`);
-      const records = ((await res.json()) as { _embedded?: { records?: ExpertEvent[] } })._embedded?.records ?? [];
+      const records = await expertEvents(pool.address, cursor);
       const rows: unknown[][] = [];
       for (const e of records) {
         if (e.topics?.[0] !== "update_reserves") continue;
@@ -402,7 +421,7 @@ async function syncPools(env: Env) {
         if (!pair) continue;
         const { hitz, quote } = orientReserves(pair, pool.hitz_index);
         rows.push([pool.address, canonicalEventId(e.id), e.ts, hitz.toString(), quote.toString()]);
-        changedFrom = changedFrom === null ? hourOf(e.ts) : Math.min(changedFrom, hourOf(e.ts));
+        bump(e.ts);
       }
       await insertMany(env.DB, "INSERT OR IGNORE", "pool_reserves", ["pool", "event_id", "ts", "hitz", "quote"], rows);
       added[pool.label] += rows.length;
@@ -413,7 +432,121 @@ async function syncPools(env: Env) {
       if (records.length < 200) break;
     }
   }
-  return { registered: registered.size, reservesAdded: added, changedFrom };
+  return { registered: registered.size, vaults, reservesAdded: added, changedFrom };
+}
+
+/** A pools row for `key`, quoting HITZ in `quoteToken`. */
+async function poolRow(env: Env, key: string, hitzIndex: number, quoteToken: string): Promise<PoolRow> {
+  const name = String(await simulateView(env, quoteToken, "name"));
+  const q = classifyQuoteName(name, env.USDC_ISSUER);
+  return {
+    address: key,
+    hitz_index: hitzIndex,
+    quote_token: quoteToken,
+    quote_kind: q.kind,
+    quote_id: q.quoteId,
+    label: `HITZ/${q.symbol}`,
+    active: 1,
+  };
+}
+
+/**
+ * The assets a Sovereign Vault lists, or null if `address` isn't one. A
+ * vault we already know skips the `hitz()` probe.
+ */
+async function vaultAssets(env: Env, address: string, knownVault: boolean): Promise<string[] | null> {
+  if (!knownVault) {
+    try {
+      if ((await simulateView(env, address, "hitz")) !== env.HITZ_CONTRACT_ID) return null;
+    } catch {
+      return null; // no `hitz()`: not a vault
+    }
+  }
+  return (await simulateView(env, address, "assets")) as string[];
+}
+
+async function expertEvents(contract: string, cursor: string | null): Promise<ExpertEvent[]> {
+  const url = `${STELLAR_EXPERT}/contract/${contract}/events?order=asc&limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+  const res = await fetch(url, { headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`Stellar Expert HTTP ${res.status} for ${contract}`);
+  return ((await res.json()) as { _embedded?: { records?: ExpertEvent[] } })._embedded?.records ?? [];
+}
+
+/** A vault event body: a map with symbol keys (INTEGRATION.md, "Events"). */
+function vaultEventBody(bodyXdr: string): Record<string, unknown> | null {
+  try {
+    const v = decodeScVal(bodyXdr);
+    return v !== null && typeof v === "object" ? (v as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reserve points for each of the vault's pools from its events, in order:
+ * `seeded` sets a pool's starting reserves, every `hop` carries its pool's
+ * reserves after the trade, and a `deposit` adds its amounts to the pool's
+ * previous point. One cursor per vault.
+ */
+async function syncVaultReserves(
+  env: Env,
+  vault: string,
+  pools: Map<string, PoolRow>,
+  bump: (ts: number) => void
+): Promise<Record<string, number>> {
+  const source = `vault:${vault}`;
+  let cursor = await getCursor(env.DB, source);
+  const added: Record<string, number> = {};
+  // Latest point per pool, for deposits; loaded from D1 on first need.
+  const last = new Map<string, { hitz: bigint; quote: bigint }>();
+  const previous = async (key: string) => {
+    if (!last.has(key)) {
+      const row = await env.DB.prepare(
+        "SELECT hitz, quote FROM pool_reserves WHERE pool = ? ORDER BY ts DESC, event_id DESC LIMIT 1"
+      )
+        .bind(key)
+        .first<{ hitz: string; quote: string }>();
+      if (row) last.set(key, { hitz: BigInt(row.hitz), quote: BigInt(row.quote) });
+    }
+    return last.get(key) ?? null;
+  };
+
+  for (let page = 0; page < POOL_PAGES; page++) {
+    const records = await expertEvents(vault, cursor);
+    const rows: unknown[][] = [];
+    for (const e of records) {
+      const name = e.topics?.[0];
+      if (name !== "seeded" && name !== "hop" && name !== "deposit") continue;
+      const asset = name === "deposit" ? e.topics[2] : e.topics[1];
+      const key = vaultPoolKey(vault, asset);
+      const pool = pools.get(key);
+      const body = vaultEventBody(e.bodyXdr);
+      if (!pool || !body) continue;
+      let point: { hitz: bigint; quote: bigint } | null = null;
+      if (name === "seeded") {
+        point = { hitz: BigInt(body.hitz as bigint), quote: BigInt(body.amount as bigint) };
+      } else if (name === "hop") {
+        point = { hitz: BigInt(body.reserve_hitz as bigint), quote: BigInt(body.reserve_asset as bigint) };
+      } else {
+        const prev = await previous(key);
+        if (prev) point = { hitz: prev.hitz + BigInt(body.hitz as bigint), quote: prev.quote + BigInt(body.amount as bigint) };
+      }
+      if (!point) continue;
+      last.set(key, point);
+      rows.push([key, canonicalEventId(e.id), e.ts, point.hitz.toString(), point.quote.toString()]);
+      added[pool.label] = (added[pool.label] ?? 0) + 1;
+      bump(e.ts);
+    }
+    // Insert before moving the cursor: a deposit's point depends on the
+    // rows before it, so they must never be skipped.
+    await insertMany(env.DB, "INSERT OR IGNORE", "pool_reserves", ["pool", "event_id", "ts", "hitz", "quote"], rows);
+    if (records.length) {
+      cursor = records[records.length - 1].paging_token;
+      await setCursor(env.DB, source, cursor);
+    }
+    if (records.length < 200) break;
+  }
+  return added;
 }
 
 // ─── 5. Quote prices ─────────────────────────────────────────────────────────
@@ -496,6 +629,16 @@ async function rebuildPrice(env: Env, changedFrom: number | null) {
 
   const priced = await loadPricedPools(env);
   if (!priced.length) return { skipped: "no priced pools" };
+  // Never recompute hours before the active pools have any reserves: those
+  // hours belong to pools that have since left the registry (the Aquarius
+  // era), and recomputing them without those pools would erase them.
+  const firstActive = await env.DB.prepare(
+    `SELECT min(ts) AS ts FROM pool_reserves WHERE pool IN (${priced.map(() => "?").join(", ")})`
+  )
+    .bind(...priced.map((p) => p.address))
+    .first<{ ts: number | null }>();
+  if (firstActive?.ts == null) return { skipped: "no reserves for the active pools yet" };
+  from = Math.max(from, hourOf(firstActive.ts));
   const { reserves, seedReserves, quotes, seedQuotes } = await loadWindow(env, priced, from);
 
   const hours = computeHours({
@@ -583,11 +726,26 @@ async function rebuildLiquidity(env: Env, changedFrom: number | null) {
   const pools = await loadPricedPools(env);
   if (!pools.length) return { skipped: "no priced pools" };
 
-  // Fees are fixed per pool contract: read once from chain, then carry forward.
+  // Vault pools: the fee and dislocation right now, from `pools()` (the fee
+  // moves with the dislocation, so it's read on every rebuild). AMM fees are
+  // fixed per pool contract: read once from chain, then carried forward.
   const feeBps = new Map<string, number>();
-  for (const p of prev?.pools ?? []) if (p.feeBps !== null) feeBps.set(p.address, p.feeBps);
+  const dislocation = new Map<string, number>();
+  for (const vault of new Set(pools.filter((p) => isVaultPool(p.address)).map((p) => poolContract(p.address)))) {
+    try {
+      const states = (await simulateView(env, vault, "pools")) as { asset: string; fee: bigint; dislocation: bigint }[];
+      for (const st of states) {
+        const key = vaultPoolKey(vault, st.asset);
+        feeBps.set(key, Number(st.fee) / 100_000); // 9 decimals → basis points
+        dislocation.set(key, Number(st.dislocation) / 1e18);
+      }
+    } catch (err) {
+      console.warn(`[ingest] could not read the vault's pools ${vault}`, err);
+    }
+  }
+  for (const p of prev?.pools ?? []) if (p.feeBps !== null && !isVaultPool(p.address)) feeBps.set(p.address, p.feeBps);
   for (const p of pools) {
-    if (feeBps.has(p.address)) continue;
+    if (feeBps.has(p.address) || isVaultPool(p.address)) continue;
     try {
       feeBps.set(p.address, Number(await simulateView(env, p.address, "get_fee_fraction")));
     } catch {
@@ -603,6 +761,7 @@ async function rebuildLiquidity(env: Env, changedFrom: number | null) {
     nowTs,
     ...data,
     feeBps,
+    dislocation,
     asOf: new Date().toISOString(),
   });
   await env.DB.prepare("INSERT OR REPLACE INTO snapshots (key, json, updated_at) VALUES (?, ?, ?)")

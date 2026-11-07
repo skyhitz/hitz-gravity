@@ -2,12 +2,14 @@
 
 import { useState } from "react";
 import {
+  getAdmin,
   getBalance,
-  isAccountVaulted,
+  isActuallyVaulted,
   isPool,
   isRouter,
   formatHitz,
 } from "../lib/stellar";
+import { VAULT_ID } from "../lib/vault";
 
 interface AccountInfo {
   address: string;
@@ -15,6 +17,7 @@ interface AccountInfo {
   vaulted: boolean;
   pool: boolean;
   router: boolean;
+  admin: boolean;
 }
 
 export default function AccountInspector() {
@@ -30,13 +33,16 @@ export default function AccountInspector() {
     setError(null);
     setInfo(null);
     try {
-      const [balance, vaulted, pool, router] = await Promise.all([
+      // `is_actually_vaulted` is the live verdict (balance > L now); the
+      // stored flag can lag until the account's next transfer.
+      const [balance, vaulted, pool, router, admin] = await Promise.all([
         getBalance(trimmed),
-        isAccountVaulted(trimmed),
+        isActuallyVaulted(trimmed),
         isPool(trimmed),
         isRouter(trimmed),
+        getAdmin(),
       ]);
-      setInfo({ address: trimmed, balance, vaulted, pool, router });
+      setInfo({ address: trimmed, balance, vaulted, pool, router, admin: admin === trimmed });
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to inspect account");
     } finally {
@@ -45,6 +51,8 @@ export default function AccountInspector() {
   };
 
   const identityLabel = (info: AccountInfo) => {
+    if (info.address === VAULT_ID) return { label: "Sovereign Vault (registered pool)", color: "text-purple" };
+    if (info.pool && info.admin) return { label: "Treasury (admin, registered pool)", color: "text-purple" };
     if (info.pool) return { label: "Approved Pool", color: "text-purple" };
     if (info.router) return { label: "Approved Router", color: "text-accent" };
     return { label: "Regular address", color: "text-muted" };

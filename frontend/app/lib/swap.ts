@@ -1,11 +1,10 @@
 /**
- * swap.ts — Physics helpers + shared units.
+ * swap.ts: physics helpers + shared units.
  *
- * All routing/quoting logic lives in `./aggregator.ts` (pure split search) and
- * `./aqua.ts` (on-chain simulation and XDR build). This file stays dumb: it
- * owns the Event-Horizon math and the token-amount utilities, so both the
- * aggregator and the UI can import from one place without pulling in the
- * stellar-sdk when they just need to do arithmetic.
+ * Quoting lives in `./vaultMath.ts` (the vault's exact fee math) and
+ * `./vault.ts` (the contract calls). This file stays dumb: it owns the
+ * token-amount utilities, so the UI can import from one place without
+ * pulling in the stellar-sdk when it just needs to do arithmetic.
  */
 
 // ─── Event Horizon physics ────────────────────────────────────────────────────

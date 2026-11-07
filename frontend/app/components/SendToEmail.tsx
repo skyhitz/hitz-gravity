@@ -41,7 +41,7 @@ import * as StellarSdk from "@stellar/stellar-sdk";
 import { useWallet } from "../contexts/WalletContext";
 import { useProtocol } from "../contexts/ProtocolContext";
 import { NETWORK_PASSPHRASE } from "../lib/stellar";
-import { HITZ_ADDRESS } from "../lib/aqua";
+import { HITZ_ADDRESS } from "../lib/tokens";
 import {
   type BalanceLine,
   bootstrapAddress,

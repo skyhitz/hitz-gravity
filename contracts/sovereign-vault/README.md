@@ -5,9 +5,15 @@ against HITZ, and all pools share HITZ:
 
 | Pool | Reserves | Listed |
 |---|---|---|
-| XLM | HITZ / XLM | at deployment |
-| USDC | HITZ / USDC | at deployment |
+| XLM | HITZ / XLM | at deployment (live since Nov 4, 2026) |
+| USDC | HITZ / USDC | at deployment (live since Nov 4, 2026) |
 | any trusted asset | HITZ / asset | later, through a 7-day timelock, up to 16 |
+
+On mainnet at `CDEISYZM526FZJ4PDWNVKD7UHXFO4ATT46K47YTUQAOLWZQV64ANNBWU`
+([Stellar Expert](https://stellar.expert/explorer/public/contract/CDEISYZM526FZJ4PDWNVKD7UHXFO4ATT46K47YTUQAOLWZQV64ANNBWU)),
+release `sovereign-vault-v1.0.0`, Wasm
+`7dea47b29b9ab94c1ea78fa647afc7b7aa065d952cbbf38e3f326dec29547763`. Bots and
+apps: [`INTEGRATION.md`](INTEGRATION.md).
 
 Any two listed assets trade through HITZ inside the vault. When one asset
 moves against another on other venues, the gap between their pools is

@@ -19,11 +19,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { CONTRACT_ID } from "../lib/stellar";
+import { VAULT_ID } from "../lib/vault";
 
 export const metadata: Metadata = {
   title: "Gravity HITZ. Whitepaper",
   description:
-    "The Invariant Gravity Model: a decentralization primitive for Soroban tokens on Stellar.",
+    "The Invariant Gravity Model: a decentralization primitive for Soroban tokens on Stellar, and the Sovereign Vault HITZ trades on.",
 };
 
 export default function Whitepaper() {
@@ -38,7 +39,7 @@ export default function Whitepaper() {
           >
             ← Mainnet
           </Link>
-          <span className="text-xs text-muted font-mono">v5.0 · 2026</span>
+          <span className="text-xs text-muted font-mono">v6.0 · 2026</span>
         </div>
       </nav>
 
@@ -61,6 +62,9 @@ export default function Whitepaper() {
             HITZ applies a square-root invariant to every transfer. As total
             liquidity grows, individual holding limits rise, but always slower
             than the reserves themselves, permanently bounding concentration.
+            Since November 2026 HITZ trades on its own exchange, the Sovereign
+            Vault, whose fee rises while one asset is dislocated against
+            another.
           </p>
         </header>
 
@@ -73,7 +77,7 @@ export default function Whitepaper() {
             triggering any on-chain constraint.
           </p>
           <p>
-            Existing approaches, vesting schedules, transfer limits, and
+            Existing approaches, such as vesting schedules, transfer limits and
             blacklists, are either static, admin-dependent, or trivially
             circumvented. None of them self-adjust as the ecosystem grows.
           </p>
@@ -90,9 +94,10 @@ export default function Whitepaper() {
         <Section number="II" title="The Gravity Model">
           <p>
             Define <Var>S</Var> as the <strong>Total Mass</strong>, the sum of
-            HITZ balances held across all admin-approved liquidity pools.{" "}
-            <Var>S</Var> is an O(1) accumulator updated on every transfer in or
-            out of a pool.
+            HITZ balances held by the admin-registered pools: today the
+            Sovereign Vault (Section V) and the treasury account. <Var>S</Var>{" "}
+            is an O(1) accumulator updated on every transfer in or out of a
+            pool.
           </p>
           <p>
             The <strong>Safety Limit</strong> <Var>L</Var>, displayed in the
@@ -106,10 +111,9 @@ export default function Whitepaper() {
           <p>
             where <Var>d</Var> = 7 (Stellar&apos;s standard decimal precision).
             Any account whose balance exceeds <Var>L</Var> is{" "}
-            <strong>vaulted</strong>. Outbound transfers are blocked until the
-            account reduces its balance below <Var>L</Var>, or until the
-            ecosystem grows enough that <Var>L</Var> rises above the
-            account&apos;s balance.
+            <strong>vaulted</strong>: it can only send HITZ to a registered
+            pool until its balance is back under <Var>L</Var>, or until the
+            ecosystem grows enough that <Var>L</Var> rises above it.
           </p>
 
           <InfoBox color="purple">
@@ -158,7 +162,7 @@ export default function Whitepaper() {
               items={[
                 "Affect Total Mass S",
                 "Vaulted users can send to them",
-                "Sacrifice to pool can release vault",
+                "A sale into the vault, or a sacrifice, can release a vault",
                 "Never vaulted themselves",
                 "Balance reconciled into S on registration",
               ]}
@@ -169,7 +173,7 @@ export default function Whitepaper() {
               tag="register_router_address"
               items={[
                 "Never affect Total Mass S",
-                "Pass-through only (DEX aggregators)",
+                "Pass-through only (the gas sponsor, aggregators)",
                 "Vaulted users CANNOT send to them",
                 "Never vaulted themselves",
                 "No mass reconciliation needed",
@@ -178,11 +182,12 @@ export default function Whitepaper() {
           </div>
 
           <p>
-            Both tiers are registered by the admin on a per-address basis.
-            Earlier versions of HITZ used WASM hash detection, automatically
+            Both tiers are registered by the admin on a per-address basis, and
+            each registration binds the address&apos;s current Wasm hash.
+            Earlier versions of HITZ used Wasm hash detection, automatically
             treating any contract whose bytecode matched an approved hash as a
             pool. This was abandoned because DEX factories allow anyone to
-            deploy a contract with any WASM hash, enabling laundering via fake
+            deploy a contract with any Wasm hash, enabling laundering via fake
             pools.{" "}
             <strong>
               Strict address whitelisting is the only secure approach.
@@ -197,8 +202,8 @@ export default function Whitepaper() {
             Incoming transfers <em>never</em> revert due to vault logic. If a
             recipient&apos;s new balance exceeds <Var>L</Var>, they are silently
             vaulted, but the transfer succeeds and returns a clean SEP-41 void.
-            This is essential for DEX router compatibility: Aqua, Soroswap, and
-            similar protocols depend on the output leg of a swap never throwing.
+            This is what lets an exchange pay out a swap&apos;s output without
+            ever failing on the buyer&apos;s balance.
           </p>
 
           <SubHeading>The Sender Gate (Lazy-Synced)</SubHeading>
@@ -217,20 +222,21 @@ export default function Whitepaper() {
 → panic("Account is vaulted: transfers locked.")`}</CodeBlock>
           <p>
             Pools and routers are always exempt as senders. Vaulted users can
-            only send to an approved pool, not to a router, not to any other
-            address. Sending to a pool (sacrifice) reduces the sender&apos;s
-            balance and increases <Var>S</Var>, potentially releasing the vault
-            if the new balance falls below the updated <Var>L</Var>.
+            only send to an approved pool: not to a router, not to any other
+            address. Sending to a pool reduces the sender&apos;s balance and
+            increases <Var>S</Var>, potentially releasing the vault if the new
+            balance falls below the updated <Var>L</Var>.
           </p>
 
           <SubHeading>Correction on Receive</SubHeading>
           <p>
             After every balance-changing call (transfer, transfer_from, mint,
             burn) the recipient&apos;s vault flag is re-evaluated against their
-            new balance and the current <Var>L</Var>. A previously trapped
-            holder whose balance now sits below <Var>L</Var> (because the
-            ecosystem expanded) is released in the same transaction. Stored
-            flags are never stale for longer than one state-changing call.
+            new balance and the current <Var>L</Var>, after <Var>S</Var> has
+            been updated. A previously trapped holder whose balance now sits
+            below <Var>L</Var> (because the ecosystem expanded) is released in
+            the same transaction. Stored flags are never stale for longer than
+            one state-changing call.
           </p>
 
           <SubHeading>Vault Release</SubHeading>
@@ -241,8 +247,14 @@ export default function Whitepaper() {
           </p>
           <ol className="list-decimal list-inside space-y-1 text-muted text-sm pl-2">
             <li>
-              Sacrifice tokens to a pool (instant, on-chain, updates{" "}
-              <Var>S</Var>).
+              Sell HITZ into the Sovereign Vault. The vault is a registered
+              pool, so the sale is always allowed; the seller is paid in XLM or
+              USDC, and the HITZ that enters the vault raises <Var>S</Var> and{" "}
+              <Var>L</Var>.
+            </li>
+            <li>
+              Sacrifice: transfer HITZ to a registered pool as a gift. Same
+              effect on <Var>S</Var>, nothing back.
             </li>
             <li>
               The ecosystem grows: <Var>S</Var> increases, <Var>L</Var> rises
@@ -251,6 +263,8 @@ export default function Whitepaper() {
             </li>
           </ol>
           <p>
+            The smallest release is the least <Var>x</Var> with{" "}
+            <code className="font-mono text-xs">balance − x ≤ √((S + x) × 10^7)</code>.
             For UIs that want to reflect physics without triggering a state
             change,{" "}
             <code className="font-mono text-xs">is_actually_vaulted(address)</code>{" "}
@@ -258,8 +272,123 @@ export default function Whitepaper() {
           </p>
         </Section>
 
-        {/* V. Hard Mint Cap */}
-        <Section number="V" title="Hard Mint Cap">
+        {/* V. The Sovereign Vault */}
+        <Section number="V" title="The Sovereign Vault">
+          <p>
+            HITZ&apos;s own exchange: one constant-product pool per trusted
+            asset, each against HITZ, all sharing HITZ. It started on November
+            4, 2026 with XLM and USDC; more can be listed later without new
+            code, up to 16 in all. HITZ ↔ asset is one hop through that
+            asset&apos;s pool; asset ↔ asset is two hops through HITZ in one
+            call, and never moves HITZ out of the vault.
+          </p>
+          <p>
+            <strong>Why HITZ needs its own.</strong> Each pool registration
+            binds the pool&apos;s code. On October 2, 2026 Aquarius upgraded
+            both HITZ pools, the token&apos;s integrity guard stopped trusting
+            them, and trading froze. Rebinding external pools to code nobody
+            reviewed would hand their price gaps to arbitrageurs and trust code
+            HITZ doesn&apos;t control. The vault is code HITZ controls, under
+            the same 7-day timelock as the token, and it compounds: HITZ is
+            backed by every listed asset at once.
+          </p>
+
+          <SubHeading>The Dislocation Fee</SubHeading>
+          <p>
+            Each pool prices HITZ in its asset, and two pools together give the
+            vault&apos;s exchange rate between their assets. Every pool keeps
+            an exponential average of its own log price (2-hour time constant)
+            and stores how far it sits from that average: its{" "}
+            <em>deviation</em>. A pair&apos;s <em>dislocation</em> is the
+            difference of the two deviations, so a move in HITZ itself shifts
+            every pool alike and dislocates nothing. A hop through the pool of
+            asset A pays:
+          </p>
+          <CodeBlock>{`fee = 1% × e^(100 × D)     capped at 10%
+D   = the largest |dislocation| of A against any reference pool,
+      in the state the hop leaves behind`}</CodeBlock>
+          <table className="w-full text-sm mt-2">
+            <thead>
+              <tr className="text-muted border-b border-border">
+                <th className="text-left py-2 font-medium">D</th>
+                <th className="text-left py-2 font-medium">Fee</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {[
+                ["0", "1.00%"],
+                ["0.5%", "1.65%"],
+                ["1%", "2.72%"],
+                ["1.5%", "4.48%"],
+                ["2%", "7.39%"],
+                ["2.30% or more", "10.00%"],
+              ].map(([d, fee]) => (
+                <tr key={d}>
+                  <td className="py-2 font-mono text-purple">{d}</td>
+                  <td className="py-2 font-mono text-accent">{fee}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <ul className="list-disc list-inside space-y-1 text-muted text-sm pl-2">
+            <li>
+              <strong>One asset relative to another.</strong> HITZ&apos;s own
+              price never enters D.
+            </li>
+            <li>
+              <strong>The worst pair.</strong> A hop pays for its asset&apos;s
+              most dislocated pair, so no route through a third asset and no
+              split into single hops is cheaper.
+            </li>
+            <li>
+              <strong>References.</strong> A pool counts as a reference only if
+              it holds at least 1/8 of the other pool&apos;s HITZ, so a shallow
+              pool can&apos;t raise a deep one&apos;s fee.
+            </li>
+            <li>
+              <strong>Decay.</strong> Deviations decay toward zero with the
+              2-hour time constant, so after a move the fee falls back to 1% on
+              its own.
+            </li>
+          </ul>
+          <p>
+            The fee is withheld from each hop&apos;s output and stays in the
+            pool it was drained from: k never decreases. When the market moves
+            one asset against another, the vault&apos;s rate falls behind;
+            closing that gap is the arbitrage, and its fee is what deepens the
+            pools.
+          </p>
+
+          <SubHeading>Liquidity</SubHeading>
+          <p>
+            The admin seeds each listed asset&apos;s pool once, at its market
+            price. After that anyone can deposit at the pool&apos;s current
+            ratio. There are no LP shares and no withdrawals: nothing leaves
+            the vault except swap outputs.
+          </p>
+
+          <SubHeading>Gravity Inside the Vault</SubHeading>
+          <p>
+            The vault is a registered pool, so the HITZ it holds is Total Mass.
+            A purchase moves HITZ out of the vault and lowers <Var>S</Var> a
+            little; a sale moves it in and raises <Var>S</Var>. The token judges
+            a buyer against the <Var>L</Var> the purchase leaves behind. A
+            vaulted account can always sell into the vault.
+          </p>
+
+          <SubHeading>Admin and Timelocks</SubHeading>
+          <p>
+            The vault&apos;s admin has two powers, both public for 7 days before
+            they can run: upgrading the code and listing a new trusted asset.
+            Seeding a listed asset is the admin&apos;s too.{" "}
+            <code className="font-mono text-xs">renounce_upgrades</code> ends
+            upgrades for good and keeps listing;{" "}
+            <code className="font-mono text-xs">renounce</code> ends everything.
+          </p>
+        </Section>
+
+        {/* VI. Hard Mint Cap */}
+        <Section number="VI" title="Hard Mint Cap">
           <p>
             HITZ compiles an absolute supply ceiling into the contract bytecode:
           </p>
@@ -271,20 +400,24 @@ export default function Whitepaper() {
           <p>
             The mint entrypoint refuses any call that would push{" "}
             <Var>total_supply</Var> past this constant. Rejection panics before
-            any state moves. No partial writes, no dangling events. Burns
+            any state moves: no partial writes, no dangling events. Burns
             decrement <Var>total_supply</Var>, so the ceiling re-opens headroom
             as tokens exit circulation.
           </p>
 
           <InfoBox color="orange">
             <strong>Immutability path:</strong> The cap is a Rust{" "}
-            <code className="font-mono text-xs">const</code>. Once the{" "}
-            <code className="font-mono text-xs">upgrade</code> entrypoint is
-            removed for mainnet, the cap becomes unalterable by any actor.
+            <code className="font-mono text-xs">const</code>. Since v2.0.0
+            every token upgrade is public for 7 days before it can run (
+            <code className="font-mono text-xs">propose_upgrade</code>, then{" "}
+            <code className="font-mono text-xs">upgrade</code>), and{" "}
+            <code className="font-mono text-xs">renounce_admin</code> ends
+            minting, upgrades and registry changes for good, at which point the
+            cap is unalterable by any actor.
           </InfoBox>
 
           <p>
-            Two new queries expose the state:{" "}
+            Two queries expose the state:{" "}
             <code className="font-mono text-xs">total_supply()</code> returns
             current circulating supply, and{" "}
             <code className="font-mono text-xs">max_supply()</code> returns the
@@ -292,8 +425,8 @@ export default function Whitepaper() {
           </p>
         </Section>
 
-        {/* VI. Implementation */}
-        <Section number="VI" title="On-Chain Implementation">
+        {/* VII. Implementation */}
+        <Section number="VII" title="On-Chain Implementation">
           <p>
             HITZ is a{" "}
             <a
@@ -314,8 +447,9 @@ export default function Whitepaper() {
               ["Checked Arithmetic", "Every arithmetic operation uses checked_add / checked_sub / checked_neg to prevent overflow."],
               ["TTL Management", "Balance and Vault keys are always extended together (~30 days) to prevent silent expiry."],
               ["Infallible Limit", "current_limit_safe() returns i128::MAX on overflow so no address is spuriously vaulted."],
-              ["SEP-41 Compliant", "transfer, transfer_from, approve, allowance, burn, burn_from, name, symbol, decimals, balance."],
-              ["Typed Events", "InitializedEvent, AdminChangedEvent, PoolRegisteredEvent, RouterRegisteredEvent, TransferEvent, ApproveEvent, VaultedEvent, MintEvent, BurnEvent."],
+              ["SEP-41 Compliant", "transfer, transfer_from, approve, allowance, burn, burn_from, name, symbol, decimals, balance, with the standard transfer, mint, burn and approve events."],
+              ["Gravity Events", "vaulted_event, pool_registered_event, router_registered_event, integrity_drift_event, initialized_event, admin_changed_event, upgrade_proposed_event, upgrade_cancelled_event, upgraded_event, admin_renounced_event."],
+              ["Timelocked Upgrades", "propose_upgrade, a 7-day wait (pending_upgrade shows it), then upgrade; renounce_admin ends it all."],
             ].map(([title, desc]) => (
               <div key={title as string} className="bg-card border border-border rounded-xl p-4 space-y-1">
                 <p className="text-sm font-medium text-foreground">{title}</p>
@@ -325,17 +459,16 @@ export default function Whitepaper() {
           </div>
         </Section>
 
-        {/* VII. TTL Restoration */}
-        <Section number="VII" title="State Archival (TTL)">
+        {/* VIII. TTL Restoration */}
+        <Section number="VIII" title="State Archival (TTL)">
           <p>
             Soroban persistent storage has a ~30-day TTL. An entry left
-            untouched past that window is archived to cold storage. It becomes
-            unreadable and unwritable until a{" "}
-            <code className="font-mono text-xs">RestoreFootprintOp</code> pays
-            to bring it back. A holder dormant for months will find their
-            balance and vault state archived. HITZ handles this at the frontend
-            layer using the same lazy-evaluation discipline the contract uses
-            for vault flags.
+            untouched past that window is archived to cold storage until it is
+            restored. A holder dormant for months will find their balance and
+            vault state archived. Since Stellar Protocol 23 a transaction
+            restores the archived entries it touches by itself, and simulation
+            accounts for them; HITZ&apos;s frontend keeps the explicit restore
+            path below for any RPC that still answers with a restore preamble.
           </p>
 
           <SubHeading>The Lazy-Restore Pattern</SubHeading>
@@ -388,16 +521,16 @@ export default function Whitepaper() {
           </p>
         </Section>
 
-        {/* VIII. Security */}
-        <Section number="VIII" title="Security Properties">
+        {/* IX. Security */}
+        <Section number="IX" title="Security Properties">
           {[
             {
-              title: "No WASM Hash Laundering",
+              title: "No Wasm Hash Laundering",
               body: "Pool status is tied to a specific address, not a bytecode fingerprint. A malicious actor cannot deploy a fake pool to inflate S.",
             },
             {
               title: "Bounded Supply",
-              body: "The 100M HITZ ceiling is a compile-time constant. Admin mint authority exists, but mints that would exceed MAX_SUPPLY panic atomically. Once the upgrade entrypoint is removed for mainnet, the cap is unalterable.",
+              body: "The 100M HITZ ceiling is a compile-time constant. Admin mint authority exists, but mints that would exceed MAX_SUPPLY panic atomically. Changing the cap takes a public, 7-day upgrade, and none after renounce_admin.",
             },
             {
               title: "No Stale Vault",
@@ -405,7 +538,7 @@ export default function Whitepaper() {
             },
             {
               title: "Integrity-Bound Registrations",
-              body: "Each registered pool and router stores its current WASM hash. A bytecode upgrade trips the integrity check on the next state-changing call, forcing admin re-registration before the token trusts the address again.",
+              body: "Each registered pool and router stores its current Wasm hash. A bytecode upgrade trips the integrity check on the next state-changing call, and the token stops trusting the address until the admin re-registers it.",
             },
             {
               title: "No Burn Escape",
@@ -413,7 +546,7 @@ export default function Whitepaper() {
             },
             {
               title: "No Router Escape",
-              body: "Vaulted accounts cannot route tokens through a DEX router. Only a direct sacrifice to an approved pool releases the vault.",
+              body: "Vaulted accounts cannot route tokens through a router. Only a transfer to an approved pool, such as a sale into the vault, releases the vault.",
             },
             {
               title: "No Silent Expiry",
@@ -422,6 +555,14 @@ export default function Whitepaper() {
             {
               title: "No Mass Underflow",
               body: "TotalMass is guarded against underflow. Pool removal subtracts the current balance; adjust_total_mass panics before going negative.",
+            },
+            {
+              title: "Timelocked Code",
+              body: "Neither the token nor the vault can change code, and the vault can't list an asset, without a public 7-day notice.",
+            },
+            {
+              title: "No Vault Drain",
+              body: "The vault has no withdrawals and no LP shares; its reserves leave only as swap outputs, and its fee keeps k from ever falling.",
             },
           ].map(({ title, body }) => (
             <div key={title} className="flex gap-4 py-3 border-b border-border last:border-0">
@@ -434,38 +575,68 @@ export default function Whitepaper() {
           ))}
         </Section>
 
-        {/* IX. Contract */}
-        <Section number="IX" title="Deployed Contract">
-          <div className="bg-card border border-border rounded-2xl overflow-hidden">
-            <div className="px-5 py-4 border-b border-border">
-              <p className="text-xs text-muted uppercase tracking-widest font-medium">Stellar Mainnet</p>
-            </div>
-            <div className="divide-y divide-border">
-              {[
+        {/* X. Contracts */}
+        <Section number="X" title="Deployed Contracts">
+          {[
+            {
+              name: "HITZ token",
+              id: CONTRACT_ID,
+              rows: [
                 ["Contract ID", CONTRACT_ID],
-                ["WASM Hash", "6dba0f1f8be9035fe448ac415b3b5ec2c86a0c969c271d09c0afd328249a0529"],
+                ["Wasm Hash", "af53185dfc0e73a4502425d30cea74487ee4bf4d23fcabd32c5f1013626c5d2d"],
+                ["Release", "v2.0.0, validated on Stellar Expert"],
                 ["Standard", "SEP-41 (Soroban Token Interface)"],
                 ["Decimals", "7"],
                 ["Max Supply", "100,000,000 HITZ"],
-                ["Architecture", "V5. V4 + Pool/Router Enumeration + Initialized/AdminChanged Events + Mainnet-Hardened"],
-              ].map(([k, v]) => (
-                <div key={k as string} className="flex items-start gap-4 px-5 py-3">
-                  <span className="text-muted text-xs w-28 shrink-0 pt-0.5">{k}</span>
-                  <span className="font-mono text-xs text-foreground break-all">{v}</span>
-                </div>
-              ))}
+              ],
+            },
+            {
+              name: "Sovereign Vault",
+              id: VAULT_ID,
+              rows: [
+                ["Contract ID", VAULT_ID],
+                ["Wasm Hash", "7dea47b29b9ab94c1ea78fa647afc7b7aa065d952cbbf38e3f326dec29547763"],
+                ["Release", "sovereign-vault-v1.0.0"],
+                ["Assets", "XLM, USDC"],
+              ],
+            },
+          ].map((c) => (
+            <div key={c.name} className="bg-card border border-border rounded-2xl overflow-hidden">
+              <div className="px-5 py-4 border-b border-border">
+                <p className="text-xs text-muted uppercase tracking-widest font-medium">Stellar Mainnet · {c.name}</p>
+              </div>
+              <div className="divide-y divide-border">
+                {c.rows.map(([k, v]) => (
+                  <div key={k} className="flex items-start gap-4 px-5 py-3">
+                    <span className="text-muted text-xs w-28 shrink-0 pt-0.5">{k}</span>
+                    <span className="font-mono text-xs text-foreground break-all">{v}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="px-5 py-3 border-t border-border">
+                <a
+                  href={`https://stellar.expert/explorer/public/contract/${c.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-accent text-xs hover:text-accent-hover transition-colors"
+                >
+                  View on Stellar Expert →
+                </a>
+              </div>
             </div>
-            <div className="px-5 py-3 border-t border-border">
-              <a
-                href={`https://stellar.expert/explorer/public/contract/${CONTRACT_ID}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-accent text-xs hover:text-accent-hover transition-colors"
-              >
-                View on Stellar Expert →
-              </a>
-            </div>
-          </div>
+          ))}
+          <p className="text-sm">
+            Integrating with the vault:{" "}
+            <a
+              href="https://github.com/skyhitz/hitz-gravity/blob/main/contracts/sovereign-vault/INTEGRATION.md"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-accent hover:text-accent-hover underline"
+            >
+              INTEGRATION.md
+            </a>
+            .
+          </p>
         </Section>
 
         {/* Footer */}

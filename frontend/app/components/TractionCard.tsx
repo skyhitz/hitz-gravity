@@ -122,8 +122,8 @@ function TractionBody({
   const channelTotal = Object.values(data.channels.allTime).reduce((a, b) => a + b, 0);
 
   const supplyRows = [
-    { label: "AMM pools", hitz: s.amm, note: "liquidity in registered pools" },
-    { label: "Treasury", hitz: s.treasury, note: "admin reserve, counted as pool mass" },
+    { label: "Sovereign Vault", hitz: s.amm, note: "liquidity in the vault's pools" },
+    { label: "Treasury", hitz: s.treasury, note: "admin account, a registered pool: counted as mass" },
     { label: "Vaulted accounts", hitz: s.vaultedPeople, note: `${data.holders.vaultedPeople} accounts above L` },
     { label: "Accounts below L", hitz: s.people, note: `${data.holders.people - data.holders.vaultedPeople} accounts` },
     { label: "Routers", hitz: s.routers, note: "pass-through infrastructure" },

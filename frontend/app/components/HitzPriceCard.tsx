@@ -3,7 +3,8 @@
 /**
  * HitzPriceCard — HITZ/USD since launch, on the Monitor tab.
  *
- * Hourly, liquidity-weighted across the registered HITZ pools (see
+ * Hourly, liquidity-weighted across the Sovereign Vault's pools since
+ * Nov 4, 2026, and across the Aquarius HITZ pools before that (see
  * functions/_lib/price-model.ts for the model). The series is pre-rendered
  * by the Worker cron; this card only fetches it every minute and draws it.
  *
@@ -184,13 +185,13 @@ export default function HitzPriceCard() {
           )}
 
           <p className="mcard-foot">
-            Liquidity-weighted across registered pools:{" "}
+            Liquidity-weighted across the Sovereign Vault&apos;s pools:{" "}
             {history.pools
               .filter((p) => p.weight > 0)
               .sort((a, b) => b.weight - a.weight)
               .map((p) => `${p.pair} ${(p.weight * 100).toFixed(0)}%`)
               .join(" · ")}
-            . Reserves from on-chain pool events; XLM/USD from the Stellar DEX. Hourly, UTC.
+            . Reserves from the vault&apos;s own events (from the Aquarius pools before Nov 4, 2026); XLM/USD from the Stellar DEX. Hourly, UTC.
           </p>
         </>
       )}

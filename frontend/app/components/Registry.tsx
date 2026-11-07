@@ -3,9 +3,9 @@
 /**
  * Registry — live list of approved pools / routers.
  *
- * Pulls from the existing listRegistrations() helper (seeds ∪ localStorage ∪
- * recent events, verified by getLedgerEntries on ApprovedPools/Routers) so
- * we match exactly what the chain reports.
+ * Reads the token's own `list_pools` / `list_routers` views (via
+ * listRegistrations), so it matches exactly what the chain reports, and
+ * names what it can: the Sovereign Vault, the treasury, the gas sponsor.
  *
  * This card replaces the registry list inside ProtocolGrowth for the Monitor
  * tab. The Admin tab's Protocol Growth scenario still owns the register /
@@ -14,15 +14,25 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { listRegistrations, type RegistrySnapshot } from "../lib/registry";
+import { KNOWN_ROUTERS, listRegistrations, type RegistrySnapshot } from "../lib/registry";
+import { describePools } from "../lib/holders";
 import { truncAddr } from "../lib/format";
 
 type Kind = "pool" | "router";
 
 type ListState =
   | { status: "loading" }
-  | { status: "ready"; snapshot: RegistrySnapshot }
+  | { status: "ready"; snapshot: RegistrySnapshot; labels: Map<string, string> }
   | { status: "error"; error: string };
+
+/** The registry plus a name for every address we can name. */
+async function loadLabelled(): Promise<{ snapshot: RegistrySnapshot; labels: Map<string, string> }> {
+  const snapshot = await listRegistrations();
+  const labels = new Map<string, string>(Object.entries(KNOWN_ROUTERS));
+  const pools = await describePools(snapshot.pools).catch(() => new Map<string, { title: string }>());
+  for (const [address, l] of pools) labels.set(address, l.title);
+  return { snapshot, labels };
+}
 
 export default function RegistryCardPair() {
   const [state, setState] = useState<ListState>({ status: "loading" });
@@ -30,8 +40,7 @@ export default function RegistryCardPair() {
   const refresh = useCallback(async () => {
     setState({ status: "loading" });
     try {
-      const snapshot = await listRegistrations();
-      setState({ status: "ready", snapshot });
+      setState({ status: "ready", ...(await loadLabelled()) });
     } catch (err) {
       setState({ status: "error", error: err instanceof Error ? err.message : String(err) });
     }
@@ -41,8 +50,8 @@ export default function RegistryCardPair() {
     let cancelled = false;
     (async () => {
       try {
-        const snapshot = await listRegistrations();
-        if (!cancelled) setState({ status: "ready", snapshot });
+        const loaded = await loadLabelled();
+        if (!cancelled) setState({ status: "ready", ...loaded });
       } catch (err) {
         if (!cancelled) {
           setState({ status: "error", error: err instanceof Error ? err.message : String(err) });
@@ -112,8 +121,8 @@ function RegistryCard({
       </div>
       <p className="registry-sub">
         {kind === "pool"
-          ? "Pool balances contribute to Total Mass. Vaulted users may only send here (Sacrifice)."
-          : "Pass-through aggregators. Never affect mass; vaulted users cannot send to them."}
+          ? "HITZ held here is Total Mass. Vaulted accounts can still send HITZ here, such as selling into the vault."
+          : "Pass-through infrastructure. Never counted as mass; vaulted accounts can't send to them."}
       </p>
 
       {state.status === "error" && (
@@ -128,14 +137,14 @@ function RegistryCard({
           <div className="registry-empty">None registered</div>
         )}
         {addresses.map((addr) => (
-          <AddressRow key={addr} address={addr} kind={kind} />
+          <AddressRow key={addr} address={addr} kind={kind} label={state.status === "ready" ? state.labels.get(addr) : undefined} />
         ))}
       </div>
     </div>
   );
 }
 
-function AddressRow({ address, kind }: { address: string; kind: Kind }) {
+function AddressRow({ address, kind, label }: { address: string; kind: Kind; label?: string }) {
   const [copied, setCopied] = useState(false);
   const explorerPath = address.startsWith("G") ? "account" : "contract";
   const explorerUrl = `https://stellar.expert/explorer/public/${explorerPath}/${address}`;
@@ -153,6 +162,7 @@ function AddressRow({ address, kind }: { address: string; kind: Kind }) {
   return (
     <div className={`registry-row ${kind}`}>
       <div style={{ minWidth: 0, flex: 1 }}>
+        {label && <div className="registry-label">{label}</div>}
         <div className="addr" title={address}>
           {truncAddr(address)}
         </div>

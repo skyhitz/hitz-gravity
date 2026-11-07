@@ -3,6 +3,10 @@
 /**
  * Home — tabs layout (Trade / Vault / Monitor / Admin).
  *
+ * Trade swaps through the Sovereign Vault (components/VaultSwap). The Vault
+ * tab is about the account's own gravity: free accounts get the send-to-
+ * email card, vaulted ones the sell-to-release card.
+ *
  * Routing is intentionally local state: the tab choice is ephemeral and
  * shouldn't pollute the URL or survive reloads. The one exception is when
  * the connected account flips to Vaulted — we auto-jump to the Vault tab
@@ -20,8 +24,8 @@ import WalletButton from "./components/WalletButton";
 import PulseBar from "./components/PulseBar";
 import AccountPulse from "./components/AccountPulse";
 import AccountInspector from "./components/AccountInspector";
-import SmartSwap from "./components/scenarios/SmartSwap";
-import SacrificeRitual from "./components/SacrificeRitual";
+import VaultSwap from "./components/VaultSwap";
+import ReleaseCard from "./components/ReleaseCard";
 import SendToEmail from "./components/SendToEmail";
 import MonitorStatCards from "./components/MonitorStatCards";
 import HolderEcosystem from "./components/ecosystem/HolderEcosystem";
@@ -184,7 +188,7 @@ export default function Home() {
                 <strong>Your account is Vaulted.</strong>
               </div>
               <div className="sub">
-                Outbound transfers are blocked until you Sacrifice or L rises.{" "}
+                You can only send HITZ to a registered pool. Sell into the vault to get back under L, or wait for L to rise.{" "}
                 <button
                   onClick={() => setTab("vault")}
                   style={{
@@ -197,7 +201,7 @@ export default function Home() {
                     font: "inherit",
                   }}
                 >
-                  Begin the ritual →
+                  Sell to release →
                 </button>
               </div>
             </div>
@@ -250,13 +254,13 @@ export default function Home() {
 // ─── Panels ────────────────────────────────────────────────────────────────
 
 function TradePanel() {
-  return <SmartSwap />;
+  return <VaultSwap />;
 }
 
 function VaultPanel({ vaulted }: { vaulted: boolean | null }) {
   const { publicKey } = useWallet();
   if (vaulted === true) {
-    return <SacrificeRitual />;
+    return <ReleaseCard />;
   }
   // Safe-orbit empty state (and fallback when no wallet connected). The
   // SendToEmail card sits directly below because this is the first tab a
@@ -287,11 +291,12 @@ function VaultPanel({ vaulted }: { vaulted: boolean | null }) {
           </svg>
         </div>
         <div className="eyebrow">Safe Orbit</div>
-        <h2>No ritual required.</h2>
+        <h2>You&apos;re free to move.</h2>
         <p>
-          Your balance is below the Event Horizon. Outbound transfers and Smart
-          Swap are both unlocked. If a future trade crosses L you&apos;ll be
-          Vaulted, and this tab will unlock the Sacrifice Ritual.
+          Your balance is below the Event Horizon: you can send HITZ anywhere
+          and trade freely. If a purchase ever takes you over L you&apos;ll be
+          Vaulted, and this tab will show how much to sell into the vault to
+          get free again.
         </p>
       </div>
       {publicKey && <SendToEmail />}

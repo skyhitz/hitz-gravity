@@ -21,7 +21,7 @@ remain in git history.)
 ```
 Soroban RPC ──getEvents──▶ Worker cron (every 5 min) ──▶ D1 `hitz-data` ──▶ /api/data/* ──▶ contract-report.mjs ──▶ reports/YYYY-MM.md
 Horizon / Stellar Expert ──enrichment──┘                     │
-Aqua pool events + Horizon XLM/USD ──────────────────────────┴──▶ /api/price/history (Monitor tab price card)
+Vault events (Stellar Expert) + Horizon XLM/USD ─────────────┴──▶ /api/price/history, /api/liquidity (Monitor tab)
 ```
 
 - **Ingestion** — `frontend/functions/_lib/ingest.ts`, run by the Worker's
@@ -31,7 +31,9 @@ Aqua pool events + Horizon XLM/USD ───────────────
   Horizon tx envelopes (`tx_info`) and Stellar Expert contract metadata
   (`contract_info`). Public RPC nodes keep only ~7 days of events, so the
   5-minute cadence leaves a wide safety margin. The same cron maintains the
-  HITZ/USD price history used by the Monitor tab.
+  HITZ/USD price history and the liquidity snapshot used by the Monitor
+  tab, from the Sovereign Vault's `seeded` / `hop` / `deposit` events (from
+  the Aquarius pools' `update_reserves` events before Nov 4, 2026).
 - **Storage** — D1 database `hitz-data`, schema in
   `frontend/migrations/`. `hitz_events` rows are exactly the old JSONL rows.
 - **Read API** — `frontend/functions/api/data.ts`, public and edge-cached

@@ -9,19 +9,30 @@
 //     p_i = quoteReserve / hitzReserve × quoteUsd(h)
 //     w_i = quoteReserve × quoteUsd(h)          (the pool's USD liquidity)
 //   P(h) = Σ w_i·p_i / Σ w_i
-// Reserves are the pool's last `update_reserves` at or before the end of
-// the hour; quote prices are the hour's volume-weighted average (both
+// Reserves are the pool's last reserve point at or before the end of the
+// hour; quote prices are the hour's volume-weighted average (both
 // forward-filled).
 // HITZ and every classic-asset SAC use 7 decimals, so raw reserves divide
 // directly with no decimal adjustment.
+//
+// Two kinds of pool feed the model:
+//   - Sovereign Vault pools (since 2026-11-04): one per listed asset inside
+//     the vault contract, keyed `<vault>:<asset>`. Reserve points come from
+//     the vault's own events: `seeded` (starting reserves), `hop` (reserves
+//     after each trade) and `deposit` (added to the previous point).
+//   - AMM pools keyed by their own address, with reserves from their
+//     `update_reserves` events: the Aquarius HITZ/XLM and HITZ/USDC pools
+//     until they were removed from the registry on 2026-11-03. Their rows
+//     stay in D1, inactive, and carry the price history before the vault.
 
 export const HOUR = 3600;
 
 export type QuoteKind = "usd" | "native" | "classic" | "unpriced";
 
 export interface PoolMeta {
+  /** The pool's key: an AMM's own address, or `<vault>:<asset>` (see `vaultPoolKey`). */
   address: string;
-  /** Position of HITZ in the pool's `get_tokens()` (0 or 1). */
+  /** Position of HITZ in the pool's `get_tokens()` (0 or 1); 0 for vault pools. */
   hitzIndex: number;
   quoteKind: QuoteKind;
   /** Key into the quote price series (e.g. "XLM", "AQUA:G…"); null for usd/unpriced. */
@@ -58,6 +69,55 @@ export interface PriceSnapshot {
 
 export function hourOf(tsSeconds: number): number {
   return Math.floor(tsSeconds / HOUR) * HOUR;
+}
+
+/** The key of the vault's pool for `asset`. */
+export function vaultPoolKey(vault: string, asset: string): string {
+  return `${vault}:${asset}`;
+}
+
+/** The contract holding a pool: the vault for vault pools, else the pool itself. */
+export function poolContract(key: string): string {
+  return key.split(":")[0];
+}
+
+export function isVaultPool(key: string): boolean {
+  return key.includes(":");
+}
+
+/**
+ * The fee a trade between two consecutive reserve states left in the pool,
+ * in the token it was withheld from. The vault withholds its fee from the
+ * hop's output, so the output fell short of the constant-product output
+ * for the input that came in: fee = y0·a/(x0 + a) − out. Zero for anything
+ * that isn't a swap (both reserves moving the same way is a deposit).
+ */
+export function impliedFee(
+  prev: { hitz: bigint; quote: bigint },
+  next: { hitz: bigint; quote: bigint }
+): { hitz: bigint; quote: bigint } {
+  const dH = next.hitz - prev.hitz;
+  const dQ = next.quote - prev.quote;
+  if (dQ > 0n && dH < 0n) {
+    const gross = (prev.hitz * dQ) / (prev.quote + dQ);
+    const fee = gross + dH; // gross − out, out = −dH
+    return { hitz: fee > 0n ? fee : 0n, quote: 0n };
+  }
+  if (dH > 0n && dQ < 0n) {
+    const gross = (prev.quote * dH) / (prev.hitz + dH);
+    const fee = gross + dQ;
+    return { hitz: 0n, quote: fee > 0n ? fee : 0n };
+  }
+  return { hitz: 0n, quote: 0n };
+}
+
+/**
+ * Sovereign Vault hop fee: 1% × e^(100·D), capped at 10%. A trade that
+ * moves one pool's price by 2% against calm references leaves D = ln 1.02,
+ * so the vault's ±2% depth is priced at that fee, not the 1% floor.
+ */
+export function vaultFee(dislocation: number): number {
+  return Math.min(0.1, 0.01 * Math.exp(100 * Math.abs(dislocation)));
 }
 
 /**
@@ -226,7 +286,11 @@ export function mergeSnapshot(
 // Only swaps count as volume, so re-seeds and LP deposits never inflate it.
 
 export interface PoolLiquidity {
+  /** The pool's key (see PoolMeta.address). */
   address: string;
+  /** The contract to link to: the vault, or the AMM pool itself. */
+  contract: string;
+  venue: "vault" | "amm";
   pair: string;
   quote: QuoteKind;
   /** HITZ reserve (whole tokens). */
@@ -240,8 +304,13 @@ export interface PoolLiquidity {
   priceUsd: number;
   /** Share of total TVL (0..1). */
   share: number;
-  /** Swap fee in basis points (Aqua `get_fee_fraction`, parts per 10,000). */
+  /**
+   * Swap fee in basis points: for a vault pool, what a very small hop pays
+   * right now (`pools()`, 100 = the 1% floor); for an AMM, its fixed fee.
+   */
   feeBps: number | null;
+  /** Vault pools: the pool's dislocation now, in percent (log terms). */
+  dislocationPct: number | null;
   /** USD a buyer must spend to move this pool's price up 2% (fee-inclusive). */
   depthUp2Usd: number;
   /** USD value of HITZ a seller can sell before price drops 2% (fee-inclusive). */
@@ -260,7 +329,10 @@ export interface LiquiditySnapshot {
   totals: {
     tvlUsd: number;
     hitzInPools: number;
-    /** (max − min) / mean of per-pool prices. */
+    /**
+     * (max − min) / mean of per-pool HITZ prices in USD. For the vault this
+     * is how far its exchange rate between two assets sits from the market.
+     */
     spreadPct: number;
     depthUp2Usd: number;
     depthDown2Usd: number;
@@ -305,7 +377,10 @@ export function summarizeLiquidity(args: {
   seedReserves: Map<string, { hitz: bigint; quote: bigint }>;
   quotes: Map<string, [number, number][]>;
   seedQuotes: Map<string, number>;
+  /** Current fee per pool, basis points. */
   feeBps: Map<string, number>;
+  /** Vault pools' current dislocation, as a fraction (0.01 = 1%). */
+  dislocation?: Map<string, number>;
   asOf: string;
 }): LiquiditySnapshot {
   const priced = args.pools.filter((p) => p.quoteKind !== "unpriced");
@@ -341,7 +416,16 @@ export function summarizeLiquidity(args: {
     const usd = usdAt(pool, r.ts);
     if (!usd) continue;
     const tradeUsd = (Number(dQ < 0n ? -dQ : dQ) / 1e7) * usd;
-    const fee = tradeUsd * ((args.feeBps.get(r.pool) ?? 0) / 10_000);
+    // Vault pools: the fee each hop actually left in the pool, read off the
+    // reserves (it moves with the dislocation). AMMs: their fixed rate.
+    let fee: number;
+    if (isVaultPool(r.pool)) {
+      const f = impliedFee(prev, r);
+      const priceUsd = (Number(r.quote) / Number(r.hitz)) * usd;
+      fee = (Number(f.quote) / 1e7) * usd + (Number(f.hitz) / 1e7) * priceUsd;
+    } else {
+      fee = tradeUsd * ((args.feeBps.get(r.pool) ?? 0) / 10_000);
+    }
     for (const [w, since] of windows) {
       if (r.ts < since) continue;
       w.usd += tradeUsd;
@@ -362,9 +446,15 @@ export function summarizeLiquidity(args: {
     const quoteReserve = Number(res.quote) / 1e7;
     const priceUsd = (quoteReserve / hitz) * usd;
     const feeBps = args.feeBps.get(pool.address) ?? null;
-    const gross = 1 / (1 - (feeBps ?? 0) / 10_000);
+    const vault = isVaultPool(pool.address);
+    const disl = args.dislocation?.get(pool.address) ?? null;
+    // A 2% move in a vault pool pays the fee for the dislocation it leaves.
+    const depthFee = vault ? vaultFee(Math.log(1.02) + Math.abs(disl ?? 0)) : (feeBps ?? 0) / 10_000;
+    const gross = 1 / (1 - depthFee);
     pools.push({
       address: pool.address,
+      contract: poolContract(pool.address),
+      venue: vault ? "vault" : "amm",
       pair: pool.label,
       quote: pool.quoteKind,
       hitz,
@@ -374,6 +464,7 @@ export function summarizeLiquidity(args: {
       priceUsd,
       share: 0,
       feeBps,
+      dislocationPct: disl === null ? null : Number((disl * 100).toFixed(4)),
       depthUp2Usd: quoteReserve * up * gross * usd,
       depthDown2Usd: hitz * down * gross * priceUsd,
     });

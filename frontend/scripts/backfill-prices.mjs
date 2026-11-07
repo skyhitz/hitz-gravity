@@ -1,5 +1,12 @@
 // One-time HITZ/USD price history backfill into D1.
 //
+// History note: this walks AMM pools (`get_tokens` + `update_reserves`), so
+// it covers the Aquarius HITZ pools, the venue until Nov 3, 2026. The
+// Sovereign Vault that replaced them is not an AMM pool contract: the cron
+// (functions/_lib/ingest.ts) discovers it through `hitz()` / `assets()` and
+// reads its `seeded` / `hop` / `deposit` events from the vault's first event,
+// so it needs no backfill.
+//
 // The ingestion cron (functions/_lib/ingest.ts) keeps price data current in
 // small increments; pulling ~12k pool events since launch in one Worker
 // invocation would blow the Free-plan limits, so the initial load runs here.

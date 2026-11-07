@@ -1,8 +1,18 @@
 # HITZ Frontend
 
 Next.js 16 app (static export) + a Cloudflare Worker for the email-based
-gas-sponsoring gateway. Deployed as a single Worker with the Static
-Assets binding — Cloudflare's recommended successor to Pages.
+gas-sponsoring gateway and the on-chain data cron. Deployed as a single
+Worker with the Static Assets binding, Cloudflare's recommended successor
+to Pages.
+
+The app trades through the HITZ Sovereign Vault
+(`CDEISYZM526FZJ4PDWNVKD7UHXFO4ATT46K47YTUQAOLWZQV64ANNBWU`): `app/lib/vault.ts`
+talks to it, `app/lib/vaultMath.ts` is an exact port of its fee math (run
+`node --experimental-strip-types scripts/check-vault-math.mjs` to replay the
+contract's golden vectors against it), and `app/components/VaultSwap.tsx` /
+`ReleaseCard.tsx` are the Trade tab and the sell-to-release card. The
+Worker cron (`functions/_lib/ingest.ts`) turns the vault's events into the
+Monitor's price and liquidity snapshots.
 
 ## Layout
 

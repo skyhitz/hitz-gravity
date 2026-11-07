@@ -5,7 +5,7 @@
  *
  * The ledger shows S, L, balance, headroom (L − balance, red if negative),
  * and vault status — enough for a returning user to parse their standing at
- * a glance without opening Smart Swap.
+ * a glance without opening the swap.
  */
 
 import { useProtocol } from "../contexts/ProtocolContext";

@@ -2,7 +2,7 @@
  * format.ts — thin UI helpers.
  *
  * `formatStroops` in swap.ts trims trailing zeros, which is the right default
- * for the Smart Swap amount field (users type `1.0000000` but want to see
+ * for the swap's amount fields (users type `1.0000000` but want to see
  * `1`). The redesign's Pulse bar / Monitor stats / sacrifice meter want
  * stable column widths — i.e. always 2 or 4 decimals. `fmtFixed` gives us
  * that without recomputing the divisor bigint in every caller.

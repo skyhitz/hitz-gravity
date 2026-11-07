@@ -49,3 +49,14 @@ export async function listRegistrations(): Promise<RegistrySnapshot> {
 export function rememberAddress(_address: string): void {
   // intentionally empty — see module docstring
 }
+
+/**
+ * Registered routers we can name. The rest show as addresses. The Aquarius
+ * routers stay registered for now; they route nothing since the Aquarius
+ * HITZ pools were retired on 2026-11-03.
+ */
+export const KNOWN_ROUTERS: Record<string, string> = {
+  GBER7ROBYH5NFFKXCDGTSMUKTDQ4U3MEUTUCPJRZZY6EYZVEFDBVNJNB: "Gas sponsor (email gateway)",
+  CA7RQDMMV6E53P5EDZA5GPWBZ33AMW2ZNO42XLI2RGRIAP4QXIARUOJQ: "Aquarius router (retired venue)",
+  CBQDHNBFBZYE4MKPWBSJOPIYLW4SFSXAXUTSXJN76GNKYVYPCKWC6QUK: "Aquarius router (retired venue)",
+};

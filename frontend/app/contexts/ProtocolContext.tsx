@@ -3,19 +3,22 @@
 /**
  * ProtocolContext — shared on-chain state surface.
  *
- * The Pulse bar, the Vault tab, the Monitor stat cards, and Smart Swap all
- * read the same three protocol values (Total Mass S, Event Horizon L, user
- * balance), plus the ephemeral "expected output" preview that Smart Swap
+ * The Pulse bar, the Vault tab, the Monitor stat cards, and the vault swap
+ * all read the same three protocol values (Total Mass S, Event Horizon L,
+ * user balance), plus the ephemeral "expected output" preview that the swap
  * emits while the user types. Keeping one source of truth avoids N parallel
  * polls and lets the Pulse bar reflect a live what-if simulation the moment
  * the user enters an amount into the swap form.
  *
  *   totalMass, safetyLimit, balance  — refreshed on mount + every 12s.
- *   expectedOut                       — set by Smart Swap when a quote lands;
- *                                       cleared by Smart Swap when the form
- *                                       is empty or the direction inverts.
- *   vaulted                           — derived: `balance > safetyLimit` OR
- *                                       the on-chain `isAccountVaulted` flag.
+ *   expectedOut                       : set by the swap when a quote lands;
+ *                                       cleared when the form is empty or
+ *                                       the trade doesn't buy HITZ.
+ *   vaulted                           : the token's live verdict,
+ *                                       `is_actually_vaulted`: balance > L
+ *                                       and not a registered pool or router.
+ *                                       (The stored flag can lag; the token
+ *                                       re-syncs it on the next transfer.)
  */
 
 import {
@@ -32,7 +35,7 @@ import {
   getBalance,
   getSafetyLimit,
   getTotalMass,
-  isAccountVaulted,
+  isActuallyVaulted,
 } from "../lib/stellar";
 import { useWallet } from "./WalletContext";
 
@@ -43,7 +46,7 @@ interface ProtocolState {
   safetyLimit: bigint;
   /** Connected wallet's HITZ balance. null when no wallet. */
   balance: bigint | null;
-  /** On-chain vaulted flag for the wallet. null when no wallet. */
+  /** Whether the wallet is vaulted right now (live, not the stored flag). null when no wallet. */
   vaulted: boolean | null;
   /** Expected output (stroops) for an in-progress swap preview. */
   expectedOut: bigint;
@@ -54,7 +57,7 @@ interface ProtocolState {
 
   /** Force a re-poll of S, L, balance. */
   refresh: () => Promise<void>;
-  /** Smart Swap calls this whenever a quote lands / is cleared. */
+  /** The swap calls this whenever a quote lands / is cleared. */
   setExpectedOut: (v: bigint) => void;
 }
 
@@ -87,7 +90,7 @@ export function ProtocolProvider({ children }: { children: ReactNode }) {
       if (publicKey) {
         const [b, v] = await Promise.all([
           getBalance(publicKey).catch(() => 0n),
-          isAccountVaulted(publicKey).catch(() => false),
+          isActuallyVaulted(publicKey).catch(() => false),
         ]);
         if (seq !== seqRef.current) return;
         setBalance(b);

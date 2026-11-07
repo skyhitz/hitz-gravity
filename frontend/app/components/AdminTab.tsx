@@ -4,7 +4,7 @@
  * AdminTab — the destructive / privileged scenarios, hidden behind a tab.
  *
  * Everything here has sharp edges: Whale's Anchor intentionally crosses L,
- * Sacrifice spends HITZ non-refundably, Protocol Growth registers pools on
+ * a vault deposit can't be withdrawn, Protocol Growth registers pools on
  * behalf of the contract admin. The amber header makes that cost explicit so
  * no-one clicks through by accident.
  *
@@ -20,6 +20,7 @@ import WhaleAnchor from "./scenarios/WhaleAnchor";
 import GhostVaulting from "./scenarios/GhostVaulting";
 import Arbitrageur from "./scenarios/Arbitrageur";
 import ProtocolGrowth from "./scenarios/ProtocolGrowth";
+import VaultAdmin from "./scenarios/VaultAdmin";
 import { useWallet } from "../contexts/WalletContext";
 
 interface ToolCardDef {
@@ -32,12 +33,21 @@ interface ToolCardDef {
   Component: React.ComponentType<{ publicKey: string | null }>;
 }
 
-// Sacrifice lives on the Vault tab as the primary ritual; the admin surface
-// keeps the remaining five scenarios for low-level manipulation + registry
-// management.
+// Selling to release lives on the Vault tab; the admin surface keeps the
+// Sovereign Vault's status and liquidity, plus the low-level scenarios and
+// registry management.
 const TOOLS: ToolCardDef[] = [
   {
     number: 1,
+    title: "Sovereign Vault",
+    subtitle: "Status, timelocks and deposits",
+    icon: "◈",
+    iconBg: "rgba(191,90,242,0.1)",
+    iconColor: "var(--purple)",
+    Component: VaultAdmin,
+  },
+  {
+    number: 2,
     title: "Free Citizen",
     subtitle: "Transfer under the Event Horizon",
     icon: "≈",
@@ -46,7 +56,7 @@ const TOOLS: ToolCardDef[] = [
     Component: FreeCitizen,
   },
   {
-    number: 2,
+    number: 3,
     title: "Whale's Anchor",
     subtitle: "Accumulate past L, get Vaulted",
     icon: "⬡",
@@ -55,7 +65,7 @@ const TOOLS: ToolCardDef[] = [
     Component: WhaleAnchor,
   },
   {
-    number: 3,
+    number: 4,
     title: "Ghost Vaulting",
     subtitle: "L shrinks, accounts passively Vaulted",
     icon: "◌",
@@ -64,16 +74,16 @@ const TOOLS: ToolCardDef[] = [
     Component: GhostVaulting,
   },
   {
-    number: 4,
+    number: 5,
     title: "Arbitrageur",
-    subtitle: "Cross-pool balancing with allowances",
+    subtitle: "Transfers, allowances, delegated transfers",
     icon: "⇌",
     iconBg: "rgba(255,214,10,0.1)",
     iconColor: "var(--yellow)",
     Component: Arbitrageur,
   },
   {
-    number: 5,
+    number: 6,
     title: "Protocol Growth",
     subtitle: "Register pool & router addresses",
     icon: "⊕",
@@ -92,10 +102,10 @@ export default function AdminTab() {
       <div className="admin-header">
         <span className="icon">⚠</span>
         <div className="txt">
-          <strong>Advanced scenarios.</strong> These tools exercise the
-          protocol&apos;s edge cases. Some deliberately cross the Event
-          Horizon, spend HITZ non-refundably, or write to admin-only storage.
-          Read each scenario&apos;s description before executing.
+          <strong>Advanced tools.</strong> These exercise the protocol&apos;s
+          edge cases and the admin&apos;s powers. Some deliberately cross the
+          Event Horizon, add liquidity that can never be withdrawn, or write
+          to admin-only storage. Read each description before executing.
         </div>
       </div>
 
