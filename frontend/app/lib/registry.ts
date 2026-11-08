@@ -18,7 +18,9 @@
  * and lets the surrounding UI keep its current error-recovery UX.
  */
 
-import { listPools, listRouters } from "./stellar";
+import { getAdmin, listPools, listRouters } from "./stellar";
+import { describePools } from "./holders";
+import { VAULT_ID } from "./vault";
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
@@ -37,6 +39,38 @@ export async function listRegistrations(): Promise<RegistrySnapshot> {
   return { pools: [...pools].sort(), routers: [...routers].sort() };
 }
 
+/** The registry plus a name for every address we can name, and the token admin. */
+export async function listLabelledRegistrations(): Promise<{
+  snapshot: RegistrySnapshot;
+  labels: Map<string, string>;
+  admin: string | null;
+}> {
+  const [snapshot, admin] = await Promise.all([listRegistrations(), getAdmin().catch(() => null)]);
+  const labels = new Map<string, string>(Object.entries(KNOWN_ROUTERS));
+  const pools = await describePools(snapshot.pools).catch(() => new Map<string, { title: string }>());
+  for (const [address, l] of pools) labels.set(address, l.title);
+  return { snapshot, labels, admin };
+}
+
+/**
+ * What removing a registration would break, for the ones where that's more
+ * than housekeeping. Null when removal is harmless.
+ */
+export function removalWarning(kind: "pool" | "router", address: string, admin: string | null): string | null {
+  if (kind === "router") {
+    return address === SPONSOR
+      ? "This is the email gateway's gas sponsor, holding the reparation reserve. Once removed it is an ordinary account above L: vaulted, able to send HITZ only into a pool. Finish or move the reserve first."
+      : null;
+  }
+  if (address === VAULT_ID) {
+    return "This is the Sovereign Vault. Its HITZ would stop counting toward Total Mass: L collapses and nearly every holder is vaulted on their next transfer.";
+  }
+  if (address === admin) {
+    return "This is the treasury. Its HITZ would stop counting toward Total Mass, so L drops sharply, and the treasury itself is vaulted. Move its HITZ into the vault first.";
+  }
+  return "Its HITZ would stop counting toward Total Mass, which lowers L for everyone.";
+}
+
 /**
  * Kept as a compatibility shim — earlier versions of this module
  * persisted candidates to localStorage so out-of-band registrations
@@ -50,13 +84,17 @@ export function rememberAddress(_address: string): void {
   // intentionally empty — see module docstring
 }
 
+const SPONSOR = "GBER7ROBYH5NFFKXCDGTSMUKTDQ4U3MEUTUCPJRZZY6EYZVEFDBVNJNB";
+
 /**
- * Registered routers we can name. The rest show as addresses. The Aquarius
- * routers stay registered for now; they route nothing since the Aquarius
- * HITZ pools were retired on 2026-11-03.
+ * Registered routers we can name. The rest show as addresses. Since the
+ * Aquarius HITZ pools were retired (2026-11-03) the third-party routers
+ * route no HITZ: the vault is the only venue and none of them reach it.
  */
 export const KNOWN_ROUTERS: Record<string, string> = {
-  GBER7ROBYH5NFFKXCDGTSMUKTDQ4U3MEUTUCPJRZZY6EYZVEFDBVNJNB: "Gas sponsor (email gateway)",
-  CA7RQDMMV6E53P5EDZA5GPWBZ33AMW2ZNO42XLI2RGRIAP4QXIARUOJQ: "Aquarius router (retired venue)",
+  [SPONSOR]: "Gas sponsor (email gateway)",
+  CA7RQDMMV6E53P5EDZA5GPWBZ33AMW2ZNO42XLI2RGRIAP4QXIARUOJQ: "Aquarius router #2 (retired venue)",
   CBQDHNBFBZYE4MKPWBSJOPIYLW4SFSXAXUTSXJN76GNKYVYPCKWC6QUK: "Aquarius router (retired venue)",
+  CB4YHF4ESRJ4XZRXISLXSUZTYY6YPBPZ73MZWSTUWY46DKYW7IGLHGF7: "Aquarius fee wrapper, third party (retired venue)",
+  CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH: "Soroswap router (no HITZ pairs)",
 };

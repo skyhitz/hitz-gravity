@@ -47,6 +47,7 @@ import { applySlippage, formatStroops } from "../lib/swap";
 import { fmtFixed } from "../lib/format";
 import { limitFor } from "../lib/gravity";
 import { isPool, isRouter } from "../lib/stellar";
+import { errorMessage } from "../lib/errors";
 
 type TxState =
   | { status: "idle" }
@@ -95,7 +96,7 @@ function describeMathError(err: unknown): string {
     if (err.message === "NotSeeded") return "This asset is listed but its pool isn't seeded yet.";
     if (err.message === "UnsupportedPair") return "The vault doesn't trade this pair.";
   }
-  return err instanceof Error ? err.message : String(err);
+  return errorMessage(err);
 }
 
 /** A token's balance for the connected account, re-read when `nonce` changes. */
@@ -312,7 +313,7 @@ export default function VaultSwap() {
         setTx({ status: "error", error: explainVaultError(res.error || "Transaction failed") });
       }
     } catch (err) {
-      setTx({ status: "error", error: explainVaultError(err instanceof Error ? err.message : String(err)) });
+      setTx({ status: "error", error: explainVaultError(errorMessage(err)) });
     }
   }, [publicKey, confirmedOut, inStroops, tokenIn, tokenOut, slippageBps, callContract, refreshPools, refreshProtocol]);
 

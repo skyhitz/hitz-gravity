@@ -25,6 +25,7 @@ import { VAULT_ID, depositAmount, depositCall, explainVaultError, readVaultStatu
 import { formatStroops, parseAmount } from "../../lib/swap";
 import { fmtFixed, truncAddr } from "../../lib/format";
 import { HITZ_ADDRESS } from "../../lib/tokens";
+import { errorMessage } from "../../lib/errors";
 
 const TOLERANCE_BPS = 50n; // the deposit accepts the pool ratio ± 0.5%
 
@@ -109,7 +110,7 @@ export default function VaultAdmin({ publicKey }: { publicKey: string | null }) 
         setTx({ status: "error", error: explainVaultError(res.error ?? "Transaction failed") });
       }
     } catch (e) {
-      setTx({ status: "error", error: explainVaultError(e instanceof Error ? e.message : String(e)) });
+      setTx({ status: "error", error: explainVaultError(errorMessage(e)) });
     }
   }, [publicKey, pool, hitz, amount, callContract, refresh]);
 

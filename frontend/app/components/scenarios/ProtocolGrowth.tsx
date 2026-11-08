@@ -11,9 +11,11 @@ import {
   isRouter,
   burn,
   parseHitz,
+  type TxResult,
 } from "../../lib/stellar";
 import { signTransaction } from "../../lib/wallet";
-import { listRegistrations, type RegistrySnapshot } from "../../lib/registry";
+import { errorMessage } from "../../lib/errors";
+import { listLabelledRegistrations, removalWarning, type RegistrySnapshot } from "../../lib/registry";
 
 interface Props {
   publicKey: string | null;
@@ -21,7 +23,7 @@ interface Props {
 
 type ListState =
   | { status: "loading" }
-  | { status: "ready"; snapshot: RegistrySnapshot }
+  | { status: "ready"; snapshot: RegistrySnapshot; labels: Map<string, string>; admin: string | null }
   | { status: "error"; error: string };
 
 /**
@@ -32,8 +34,7 @@ type ListState =
  */
 async function fetchSnapshot(): Promise<ListState> {
   try {
-    const snapshot = await listRegistrations();
-    return { status: "ready", snapshot };
+    return { status: "ready", ...(await listLabelledRegistrations()) };
   } catch (err) {
     return {
       status: "error",
@@ -84,13 +85,14 @@ export default function ProtocolGrowth({ publicKey }: Props) {
         re-registered. Never re-register the retired Aquarius pools (CCCDPF74…, CBMOEJUO…).
       </p>
 
-      {/* Live registry */}
+      {/* Live registry: each row's Remove sends the removal itself, after a confirm step */}
       <RegistryPanel
         title="Registered Pools"
         kind="pool"
         state={listState}
         onRefresh={refresh}
-        onRemove={(addr) => setRemovePoolAddr(addr)}
+        canSign={!!publicKey}
+        onRemove={(addr) => removePoolAddress(publicKey!, addr, signTransaction)}
       />
 
       <RegistryPanel
@@ -98,7 +100,8 @@ export default function ProtocolGrowth({ publicKey }: Props) {
         kind="router"
         state={listState}
         onRefresh={refresh}
-        onRemove={(addr) => setRemoveRouterAddr(addr)}
+        canSign={!!publicKey}
+        onRemove={(addr) => removeRouterAddress(publicKey!, addr, signTransaction)}
       />
 
       {/* Register Pool */}
@@ -255,14 +258,17 @@ function RegistryPanel({
   kind,
   state,
   onRefresh,
+  canSign,
   onRemove,
 }: {
   title: string;
   kind: "pool" | "router";
   state: ListState;
   onRefresh: () => void;
-  onRemove: (addr: string) => void;
+  canSign: boolean;
+  onRemove: (addr: string) => Promise<TxResult>;
 }) {
+  const [removed, setRemoved] = useState<{ address: string; hash?: string } | null>(null);
   const addresses =
     state.status === "ready"
       ? kind === "pool"
@@ -308,20 +314,47 @@ function RegistryPanel({
         </p>
       )}
 
+      {removed && (
+        <p className="text-xs rounded-lg px-3 py-2 bg-green/10 text-green font-mono break-all">
+          Removed {shorten(removed.address)}.{" "}
+          {removed.hash && (
+            <a
+              href={`https://stellar.expert/explorer/public/tx/${removed.hash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline"
+            >
+              View tx
+            </a>
+          )}
+        </p>
+      )}
+
       {state.status === "ready" && addresses.length === 0 && (
         <p className="text-muted text-xs italic">
           No {kind === "pool" ? "pools" : "routers"} registered yet.
         </p>
       )}
 
-      {addresses.length > 0 && (
+      {state.status === "ready" && addresses.length > 0 && (
         <ul className="space-y-1.5">
           {addresses.map((addr) => (
             <AddressRow
               key={addr}
               address={addr}
+              kind={kind}
               accent={accent}
-              onRemove={() => onRemove(addr)}
+              label={state.labels.get(addr)}
+              warning={removalWarning(kind, addr, state.admin)}
+              canSign={canSign}
+              onRemove={async () => {
+                const res = await onRemove(addr);
+                if (res.success) {
+                  setRemoved({ address: addr, hash: res.hash });
+                  onRefresh();
+                }
+                return res;
+              }}
             />
           ))}
         </ul>
@@ -330,16 +363,42 @@ function RegistryPanel({
   );
 }
 
+type RowStep =
+  | { step: "idle" }
+  | { step: "confirm" }
+  | { step: "sending" }
+  | { step: "failed"; error: string };
+
 function AddressRow({
   address,
+  kind,
   accent,
+  label,
+  warning,
+  canSign,
   onRemove,
 }: {
   address: string;
+  kind: "pool" | "router";
   accent: string;
-  onRemove: () => void;
+  label?: string;
+  warning: string | null;
+  canSign: boolean;
+  onRemove: () => Promise<TxResult>;
 }) {
   const [copied, setCopied] = useState(false);
+  const [row, setRow] = useState<RowStep>({ step: "idle" });
+
+  const confirmRemoval = async () => {
+    setRow({ step: "sending" });
+    try {
+      const res = await onRemove();
+      // On success the list refreshes and this row goes away.
+      setRow(res.success ? { step: "idle" } : { step: "failed", error: res.error ?? "Transaction failed" });
+    } catch (e: unknown) {
+      setRow({ step: "failed", error: errorMessage(e) });
+    }
+  };
 
   const copy = async () => {
     try {
@@ -355,44 +414,83 @@ function AddressRow({
   const explorerUrl = `https://stellar.expert/explorer/public/${explorerPath}/${address}`;
 
   return (
-    <li className="flex items-center gap-2 rounded-lg border border-border bg-background/40 px-3 py-2 hover:border-muted transition-colors">
-      <a
-        href={explorerUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        className={`font-mono text-xs truncate ${accent} hover:underline`}
-        title={address}
-      >
-        {shorten(address)}
-      </a>
+    <li className="rounded-lg border border-border bg-background/40 px-3 py-2 hover:border-muted transition-colors space-y-2">
+      <div className="flex items-center gap-2">
+        <div className="min-w-0">
+          {label && <div className="text-[11px] text-muted truncate">{label}</div>}
+          <a
+            href={explorerUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`font-mono text-xs truncate ${accent} hover:underline`}
+            title={address}
+          >
+            {shorten(address)}
+          </a>
+        </div>
 
-      <span className="flex-1" />
+        <span className="flex-1" />
 
-      <button
-        onClick={copy}
-        className="text-muted hover:text-foreground transition-colors text-[11px] cursor-pointer"
-        title="Copy address"
-      >
-        {copied ? "✓ Copied" : "Copy"}
-      </button>
+        <button
+          onClick={copy}
+          className="text-muted hover:text-foreground transition-colors text-[11px] cursor-pointer"
+          title="Copy address"
+        >
+          {copied ? "✓ Copied" : "Copy"}
+        </button>
 
-      <a
-        href={explorerUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-muted hover:text-foreground transition-colors text-[11px]"
-        title="View on Stellar Expert"
-      >
-        ↗
-      </a>
+        <a
+          href={explorerUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-muted hover:text-foreground transition-colors text-[11px]"
+          title="View on Stellar Expert"
+        >
+          ↗
+        </a>
 
-      <button
-        onClick={onRemove}
-        className="text-muted hover:text-red transition-colors text-[11px] cursor-pointer"
-        title="Pre-fill the remove input below"
-      >
-        Remove
-      </button>
+        {(row.step === "idle" || row.step === "failed") && (
+          <button
+            onClick={() => setRow({ step: "confirm" })}
+            disabled={!canSign}
+            className="text-muted hover:text-red transition-colors text-[11px] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            title={canSign ? `Remove this ${kind}` : "Connect the admin wallet to remove"}
+          >
+            Remove
+          </button>
+        )}
+      </div>
+
+      {row.step === "confirm" && (
+        <div className="rounded-lg bg-red/10 px-3 py-2 space-y-2 text-xs">
+          <p className="text-foreground">
+            Remove {shorten(address)} from the registered {kind}s? You&apos;ll sign one transaction.
+          </p>
+          {warning && <p className="text-red">{warning}</p>}
+          <div className="flex gap-2">
+            <button
+              onClick={confirmRemoval}
+              className="bg-red/20 hover:bg-red/30 text-red border border-red/30 rounded-lg px-3 py-1.5 font-medium cursor-pointer"
+            >
+              Confirm removal
+            </button>
+            <button
+              onClick={() => setRow({ step: "idle" })}
+              className="text-muted hover:text-foreground rounded-lg px-3 py-1.5 cursor-pointer"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {row.step === "sending" && (
+        <p className="text-xs text-muted">Sign in your wallet; submitting once signed…</p>
+      )}
+
+      {row.step === "failed" && (
+        <p className="text-xs rounded-lg px-3 py-2 bg-red/10 text-red font-mono break-all">{row.error}</p>
+      )}
     </li>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useState, ReactNode } from "react";
 import { TxResult } from "../lib/stellar";
+import { errorMessage } from "../lib/errors";
 
 interface Props {
   label: string;
@@ -35,7 +36,7 @@ export default function TxButton({
     } catch (e: unknown) {
       setResult({
         success: false,
-        error: e instanceof Error ? e.message : String(e),
+        error: errorMessage(e),
       });
     } finally {
       setLoading(false);

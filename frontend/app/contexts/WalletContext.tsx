@@ -35,6 +35,7 @@ import {
 } from "react";
 import * as StellarSdk from "@stellar/stellar-sdk";
 import * as gateway from "../lib/gateway";
+import { errorMessage } from "../lib/errors";
 import {
   NETWORK_PASSPHRASE,
   RPC_URL,
@@ -182,7 +183,7 @@ async function walletCallContract(
       error: `Transaction failed: ${getResponse.status}`,
     };
   } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : String(err) };
+    return { success: false, error: errorMessage(err) };
   }
 }
 
