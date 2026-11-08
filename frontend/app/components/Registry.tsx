@@ -14,8 +14,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { KNOWN_ROUTERS, listRegistrations, type RegistrySnapshot } from "../lib/registry";
-import { describePools } from "../lib/holders";
+import { listLabelledRegistrations, type RegistrySnapshot } from "../lib/registry";
 import { truncAddr } from "../lib/format";
 
 type Kind = "pool" | "router";
@@ -27,10 +26,7 @@ type ListState =
 
 /** The registry plus a name for every address we can name. */
 async function loadLabelled(): Promise<{ snapshot: RegistrySnapshot; labels: Map<string, string> }> {
-  const snapshot = await listRegistrations();
-  const labels = new Map<string, string>(Object.entries(KNOWN_ROUTERS));
-  const pools = await describePools(snapshot.pools).catch(() => new Map<string, { title: string }>());
-  for (const [address, l] of pools) labels.set(address, l.title);
+  const { snapshot, labels } = await listLabelledRegistrations();
   return { snapshot, labels };
 }
 

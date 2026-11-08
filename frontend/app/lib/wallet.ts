@@ -18,14 +18,16 @@ async function getKit() {
 /**
  * Sign a transaction XDR with whichever wallet the user connected.
  * Drop-in compatible with the old Freighter-based signTransaction shape.
+ * Pass `address` so wallets holding several accounts sign with the right one.
  */
 export async function signTransaction(
   xdr: string,
-  opts: { networkPassphrase: string }
+  opts: { networkPassphrase: string; address?: string }
 ): Promise<string> {
   const StellarWalletsKit = await getKit();
   const { signedTxXdr } = await StellarWalletsKit.signTransaction(xdr, {
     networkPassphrase: opts.networkPassphrase,
+    address: opts.address,
   });
   return signedTxXdr;
 }

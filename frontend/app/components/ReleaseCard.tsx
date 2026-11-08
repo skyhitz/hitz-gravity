@@ -25,6 +25,7 @@ import { FEE_CAP, VaultMathError, poolsFromStates, swap as vaultSwap, type Hop }
 import { limitFor, minimumToRelease } from "../lib/gravity";
 import { applySlippage, formatStroops, parseAmount } from "../lib/swap";
 import { fmtFixed } from "../lib/format";
+import { errorMessage } from "../lib/errors";
 import Orbit, { orbitState } from "./Orbit";
 
 const SLIPPAGE_BPS = 100; // 1%
@@ -136,7 +137,7 @@ export default function ReleaseCard() {
         setTx({ status: "error", error: explainVaultError(res.error || "Transaction failed") });
       }
     } catch (err) {
-      setTx({ status: "error", error: explainVaultError(err instanceof Error ? err.message : String(err)) });
+      setTx({ status: "error", error: explainVaultError(errorMessage(err)) });
     }
   }, [publicKey, asset, confirmedOut, amountStroops, callContract, refreshPools, refresh]);
 

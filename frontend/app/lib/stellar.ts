@@ -1,4 +1,5 @@
 import * as StellarSdk from "@stellar/stellar-sdk";
+import { errorMessage } from "./errors";
 
 const CONTRACT_ID =
   "CBAPZAZNNB4X3VPXV2LYA5RMV7XHXIVREES2GG7R5GUXDZ4R4CKOY4EU";
@@ -215,7 +216,7 @@ export async function restoreArchivedState(
   preamble: StellarSdk.rpc.Api.SimulateTransactionRestoreResponse["restorePreamble"],
   signTransaction: (
     xdr: string,
-    opts: { networkPassphrase: string }
+    opts: { networkPassphrase: string; address?: string }
   ) => Promise<string>
 ): Promise<void> {
   const account = await server.getAccount(publicKey);
@@ -234,6 +235,7 @@ export async function restoreArchivedState(
   const assembled = StellarSdk.rpc.assembleTransaction(draft, sim).build();
   const signedXdr = await signTransaction(assembled.toXDR(), {
     networkPassphrase: NETWORK_PASSPHRASE,
+    address: publicKey,
   });
   const signedTx = StellarSdk.TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE);
   const resp = await server.sendTransaction(signedTx);
@@ -252,11 +254,29 @@ export async function restoreArchivedState(
   }
 }
 
+/**
+ * Stellar's result code for a rejected or failed transaction, e.g. `txBadSeq`
+ * or `txFailed (invokeHostFunctionTrapped)`. Null when there is nothing to read.
+ */
+function txResultCode(result: StellarSdk.xdr.TransactionResult | undefined): string | null {
+  if (!result) return null;
+  try {
+    const inner = result.result();
+    const code = inner.switch().name;
+    if (code !== "txFailed") return code;
+    const op = inner.results()[0];
+    const opCode = op?.switch().name === "opInner" ? op.tr().value().switch().name : op?.switch().name;
+    return opCode ? `${code} (${opCode})` : code;
+  } catch {
+    return null;
+  }
+}
+
 async function buildAndSend(
   publicKey: string,
   method: string,
   args: StellarSdk.xdr.ScVal[],
-  signTransaction: (xdr: string, opts: { networkPassphrase: string }) => Promise<string>
+  signTransaction: (xdr: string, opts: { networkPassphrase: string; address?: string }) => Promise<string>
 ): Promise<TxResult> {
   try {
     const contract = new StellarSdk.Contract(CONTRACT_ID);
@@ -295,6 +315,7 @@ async function buildAndSend(
 
     const signedXdr = await signTransaction(prepared.toXDR(), {
       networkPassphrase: NETWORK_PASSPHRASE,
+      address: publicKey,
     });
 
     const signedTx = StellarSdk.TransactionBuilder.fromXDR(
@@ -305,7 +326,8 @@ async function buildAndSend(
     const response = await server.sendTransaction(signedTx);
 
     if (response.status === "ERROR") {
-      return { success: false, error: "Transaction submission failed" };
+      const code = txResultCode(response.errorResult);
+      return { success: false, error: `Transaction submission failed${code ? `: ${code}` : ""}` };
     }
 
     // Poll for result
@@ -318,15 +340,15 @@ async function buildAndSend(
     if (getResponse.status === "SUCCESS") {
       return { success: true, hash: response.hash };
     } else {
+      const code = getResponse.status === "FAILED" ? txResultCode(getResponse.resultXdr) : null;
       return {
         success: false,
         hash: response.hash,
-        error: `Transaction failed: ${getResponse.status}`,
+        error: `Transaction failed: ${code ?? getResponse.status}`,
       };
     }
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { success: false, error: message };
+    return { success: false, error: errorMessage(err) };
   }
 }
 
