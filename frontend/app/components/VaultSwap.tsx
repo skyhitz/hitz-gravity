@@ -274,13 +274,18 @@ export default function VaultSwap() {
   };
 
   // ─── Gravity ──────────────────────────────────────────────────────────────
-  const buying = tokenOut === HITZ_ADDRESS && !isExempt;
+  const buyingHitz = tokenOut === HITZ_ADDRESS;
+  const buying = buyingHitz && !isExempt;
   const selling = tokenIn === HITZ_ADDRESS;
   const hitzDelta = tokenOut === HITZ_ADDRESS ? amountOut : selling ? -inStroops : 0n;
   // HITZ leaving the vault lowers S; HITZ entering it raises S. A pool or
   // router trading with the vault moves HITZ between pools: S stays.
   const limitAfter = totalMass > 0n && !isExempt ? limitFor(totalMass - hitzDelta) : safetyLimit;
-  const balanceAfter = hitzBalance !== null ? hitzBalance + hitzDelta : null;
+  // Without a wallet there's no balance to read: preview the purchase on its
+  // own, as a new account (0 HITZ) would make it, instead of showing nothing.
+  const previewOnly = !publicKey && buying;
+  const baseBalance = hitzBalance ?? (previewOnly ? 0n : null);
+  const balanceAfter = baseBalance !== null ? baseBalance + hitzDelta : null;
   const willVault = buying && amountOut > 0n && balanceAfter !== null && limitAfter > 0n && balanceAfter > limitAfter;
   const releases = selling && vaulted === true && balanceAfter !== null && inStroops > 0n && balanceAfter <= limitAfter;
   const pressurePct =
@@ -437,7 +442,7 @@ export default function VaultSwap() {
             <div className="pressure-row">
               <span className="lbl">Live Pressure</span>
               <span className="val" style={{ color: willVault ? "var(--red)" : "var(--foreground)" }}>
-                {pressurePct.toFixed(1)}% of L
+                {pressurePct.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}% of L
               </span>
             </div>
             <div className="pressure-track">
@@ -447,10 +452,20 @@ export default function VaultSwap() {
               />
             </div>
             <div className="pressure-stats">
-              <Stat label="Balance" value={fmtFixed(hitzBalance, 4)} />
-              <Stat label="After swap" value={amountOut > 0n && balanceAfter !== null ? fmtFixed(balanceAfter, 4) : "–"} red={willVault} />
-              <Stat label="Event Horizon" value={limitAfter > 0n ? fmtFixed(limitAfter, 4) : "–"} />
+              <Stat label="Balance" value={fmtStat(baseBalance)} />
+              <Stat label="After swap" value={amountOut > 0n && balanceAfter !== null ? fmtStat(balanceAfter) : "–"} red={willVault} />
+              <Stat label="Event Horizon" value={limitAfter > 0n ? fmtStat(limitAfter) : "–"} />
             </div>
+            {previewOnly && (
+              <p className="pressure-note">Not connected: this shows the purchase on its own. Connect to include your balance.</p>
+            )}
+          </div>
+        )}
+
+        {buyingHitz && isExempt && (
+          <div className="alert info" style={{ marginTop: 14 }}>
+            <span className="icon">⬡</span>
+            <div>This account is registered on the HITZ token as a pool or router, so it&apos;s never vaulted: no Event Horizon applies.</div>
           </div>
         )}
 
@@ -706,11 +721,20 @@ function TokenField({
   );
 }
 
+/** HITZ for the pressure stats: whole units from 10,000 up, so a big balance fits a phone-width column. */
+function fmtStat(v: bigint | null): string {
+  if (v === null) return fmtFixed(v);
+  const big = (v < 0n ? -v : v) >= 10_000n * 10_000_000n;
+  return fmtFixed(v, big ? 0 : 4);
+}
+
 function Stat({ label, value, red = false }: { label: string; value: string; red?: boolean }) {
   return (
     <div className="pressure-stat">
       <span className="k">{label}</span>
-      <span className={`v ${red ? "red" : ""}`}>{value}</span>
+      <span className={`v ${red ? "red" : ""}`} title={value}>
+        {value}
+      </span>
     </div>
   );
 }
