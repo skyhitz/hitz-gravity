@@ -15,7 +15,8 @@
  * Parent (WalletButton) controls visibility and drives the outcome.
  */
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import { createPortal } from "react-dom";
 import { useWallet } from "../contexts/WalletContext";
 
 interface Props {
@@ -50,89 +51,115 @@ export default function ConnectModal({ onClose }: Props) {
     await connectWallet();
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-[#050507]/96 backdrop-blur-2xl" onClick={onClose} />
+  // While open: the page behind doesn't scroll, and Escape closes.
+  useEffect(() => {
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = previous;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [onClose]);
 
-      <div className="relative w-full max-w-sm rounded-3xl border border-border bg-card shadow-2xl" style={{ animation: "fadeUp 0.18s ease-out both" }}>
-        {/* ── Header ───────────────────────────────────────────────── */}
-        <div className="px-6 pt-6 pb-4 border-b border-border">
-          <div className="flex items-start justify-between gap-4">
-            <div className="space-y-1 min-w-0">
-              <p className="text-accent text-xs tracking-widest uppercase font-medium">Connect</p>
-              <h2 className="text-xl font-semibold tracking-tight">Enter the Gravity Field</h2>
+  // Rendered into <body>: the modal is opened from the nav, whose
+  // backdrop-filter would otherwise become the containing block of this
+  // fixed overlay, shrinking it to the nav's 56px and cutting the card off.
+  // The overlay scrolls when the card is taller than the screen (a phone
+  // with its keyboard up); a tap outside the card closes it.
+  return createPortal(
+    <div className="fixed inset-0 z-50 overflow-y-auto overscroll-contain" role="dialog" aria-modal="true" aria-label="Connect">
+      <div className="fixed inset-0 bg-[#050507]/96 backdrop-blur-2xl" aria-hidden />
+      <div
+        className="relative flex min-h-full items-center justify-center p-4"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) onClose();
+        }}
+      >
+        <div className="relative w-full max-w-sm rounded-3xl border border-border bg-card shadow-2xl" style={{ animation: "fadeUp 0.18s ease-out both" }}>
+          {/* ── Header ───────────────────────────────────────────────── */}
+          <div className="px-6 pt-6 pb-4 border-b border-border">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1 min-w-0">
+                <p className="text-accent text-xs tracking-widest uppercase font-medium">Connect</p>
+                <h2 className="text-xl font-semibold tracking-tight">Enter the Gravity Field</h2>
+              </div>
+              <button
+                onClick={onClose}
+                aria-label="Close"
+                className="shrink-0 w-8 h-8 rounded-full border border-border hover:border-muted transition-colors text-muted hover:text-foreground flex items-center justify-center"
+              >
+                ×
+              </button>
             </div>
-            <button
-              onClick={onClose}
-              aria-label="Close"
-              className="shrink-0 w-8 h-8 rounded-full border border-border hover:border-muted transition-colors text-muted hover:text-foreground flex items-center justify-center"
-            >
-              ×
-            </button>
+          </div>
+
+          {/* ── Body ─────────────────────────────────────────────────── */}
+          <div className="px-6 py-5 space-y-5">
+            {status.kind === "sent" ? (
+              <SentState email={status.email} onResend={() => setStatus({ kind: "idle" })} />
+            ) : (
+              <form onSubmit={submit} className="space-y-3">
+                <label className="block">
+                  <span className="block text-xs tracking-widest uppercase text-muted mb-2">Email</span>
+                  <input
+                    type="email"
+                    required
+                    autoFocus
+                    autoComplete="email"
+                    placeholder="you@skyhitz.io"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="inp"
+                    disabled={status.kind === "sending"}
+                  />
+                </label>
+                <button
+                  type="submit"
+                  disabled={status.kind === "sending" || email.trim().length === 0}
+                  className="w-full py-3 rounded-xl text-sm font-semibold transition-colors bg-accent hover:bg-accent-hover text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {status.kind === "sending" ? "Sending link…" : "Email me a sign-in link"}
+                </button>
+                {status.kind === "error" && (
+                  <p className="text-xs text-red">{status.message}</p>
+                )}
+              </form>
+            )}
+
+            {status.kind !== "sent" && (
+              <>
+                <div className="flex items-center gap-3 text-muted text-[11px] tracking-widest uppercase">
+                  <div className="flex-1 h-px bg-border" />
+                  <span>or</span>
+                  <div className="flex-1 h-px bg-border" />
+                </div>
+
+                <button
+                  onClick={handleWallet}
+                  className="w-full py-3 rounded-xl text-sm font-medium border border-border hover:border-muted hover:bg-card-hover transition-colors cursor-pointer"
+                >
+                  Connect Stellar wallet →
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* ── Footer hint ──────────────────────────────────────────── */}
+          <div className="px-6 pb-5 pt-1">
+            <p className="text-[11px] text-muted leading-relaxed">
+              Email accounts are fully custodial — we derive a Stellar address
+              deterministically from your email. Transactions are gas-sponsored:
+              you&apos;ll never need XLM or a seed phrase.
+            </p>
           </div>
         </div>
-
-        {/* ── Body ─────────────────────────────────────────────────── */}
-        <div className="px-6 py-5 space-y-5">
-          {status.kind === "sent" ? (
-            <SentState email={status.email} onResend={() => setStatus({ kind: "idle" })} />
-          ) : (
-            <form onSubmit={submit} className="space-y-3">
-              <label className="block">
-                <span className="block text-xs tracking-widest uppercase text-muted mb-2">Email</span>
-                <input
-                  type="email"
-                  required
-                  autoFocus
-                  autoComplete="email"
-                  placeholder="you@skyhitz.io"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="inp"
-                  disabled={status.kind === "sending"}
-                />
-              </label>
-              <button
-                type="submit"
-                disabled={status.kind === "sending" || email.trim().length === 0}
-                className="w-full py-3 rounded-xl text-sm font-semibold transition-colors bg-accent hover:bg-accent-hover text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-              >
-                {status.kind === "sending" ? "Sending link…" : "Email me a sign-in link"}
-              </button>
-              {status.kind === "error" && (
-                <p className="text-xs text-red">{status.message}</p>
-              )}
-            </form>
-          )}
-
-          {status.kind !== "sent" && (
-            <>
-              <div className="flex items-center gap-3 text-muted text-[11px] tracking-widest uppercase">
-                <div className="flex-1 h-px bg-border" />
-                <span>or</span>
-                <div className="flex-1 h-px bg-border" />
-              </div>
-
-              <button
-                onClick={handleWallet}
-                className="w-full py-3 rounded-xl text-sm font-medium border border-border hover:border-muted hover:bg-card-hover transition-colors cursor-pointer"
-              >
-                Connect Stellar wallet →
-              </button>
-            </>
-          )}
-        </div>
-
-        {/* ── Footer hint ──────────────────────────────────────────── */}
-        <div className="px-6 pb-5 pt-1">
-          <p className="text-[11px] text-muted leading-relaxed">
-            Email accounts are fully custodial — we derive a Stellar address
-            deterministically from your email. Transactions are gas-sponsored:
-            you&apos;ll never need XLM or a seed phrase.
-          </p>
-        </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
