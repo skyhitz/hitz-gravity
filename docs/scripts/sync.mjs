@@ -23,6 +23,7 @@ const PAGES = [
   { src: "WHITEPAPER.md", out: "whitepaper.md", slug: "/whitepaper", title: "Whitepaper", description: "The Invariant Gravity Model and the Sovereign Vault." },
   { src: "contracts/sovereign-vault/INTEGRATION.md", out: "vault/integration.md", slug: "/vault/integration", title: "Integrating the vault", description: "Calls, events and arbitrage for bots, wallets and apps." },
   { src: "contracts/sovereign-vault/MIGRATION.md", out: "vault/migration.md", slug: "/vault/migration", title: "Migration from Aquarius", description: "How HITZ moved from Aquarius pools to the Sovereign Vault." },
+  { src: "frontend/ARB_BOT.md", out: "vault/arbitrage-bot.md", slug: "/vault/arbitrage-bot", title: "Arbitrage bot", description: "The bot Skyhitz runs between the vault and the Stellar DEX, and how to run your own." },
   { src: "AUDIT.md", out: "security/audit.md", slug: "/security/audit", title: "Security review", description: "Findings and status for the token and the vault." },
   { src: "research/vault-backtest/README.md", out: "security/fee-backtest.md", slug: "/security/fee-backtest", title: "Fee backtest", description: "The vault's fee replayed on the real arbitrage history." },
   { src: "frontend/README.md", out: "app/frontend.md", slug: "/app/frontend", title: "App and gateway", description: "The web app, the email gateway, the Worker and deployment." },

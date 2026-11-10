@@ -13,6 +13,7 @@
 // The logic lives in _lib/vault-api.ts, shared with the MCP server (api/mcp.ts).
 // Errors are {error, code, …details} with a matching HTTP status.
 
+import { botStatus } from "../_lib/arb-worker";
 import { openapi } from "../_lib/openapi";
 import {
   ApiError,
@@ -102,6 +103,7 @@ export const GET_INDEX = route(async (_request, env) =>
       "POST /api/v1/submit": "{xdr} → submits a signed vault transaction and waits for the result.",
       "GET /api/v1/tx?hash=…": "Status of a transaction, with the swap decoded.",
       "GET /api/v1/account?address=G…": "Balances, trustlines and how much HITZ the account can buy before being vaulted.",
+      "GET /api/v1/bot": "Our own arbitrage bot: its address, last run, totals and recent trades.",
     },
     links: links(env),
   })
@@ -127,6 +129,9 @@ export const GET_ACCOUNT = route(async (request, env) => {
 });
 
 export const GET_OPENAPI = route(async (_request, env) => respond(openapi(env), 200, { "Cache-Control": "public, max-age=3600" }));
+
+/** Our own arbitrage bot: address, mode, last run, totals and recent actions. */
+export const GET_BOT = route(async (request, env, ctx) => cached(request, ctx, 30, () => botStatus(env)));
 
 export async function OPTIONS(): Promise<Response> {
   return new Response(null, { status: 204, headers: CORS });

@@ -7,6 +7,7 @@
 - [Overview](https://docs.skyhitz.io/): contracts, addresses and the model in one paragraph
 - [Whitepaper](https://docs.skyhitz.io/whitepaper): the Invariant Gravity Model and the Sovereign Vault
 - [Integrating the vault](https://docs.skyhitz.io/vault/integration): calls, errors, the fee math, events, arbitrage, calling from a contract or an account
+- [Arbitrage bot](https://docs.skyhitz.io/vault/arbitrage-bot): the vault/DEX arbitrage Skyhitz runs, and how to run your own copy
 - [Security review](https://docs.skyhitz.io/security/audit): findings and status for the token and the vault
 - [Legal disclosure](https://docs.skyhitz.io/legal)
 

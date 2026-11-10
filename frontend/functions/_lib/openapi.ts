@@ -160,6 +160,15 @@ export function openapi(env: Env) {
           responses: { "200": json({ type: "object" }, "The account."), "400": errors["400"] },
         },
       },
+      "/bot": {
+        get: {
+          operationId: "getBot",
+          summary: "Skyhitz's own arbitrage bot",
+          description:
+            "The account Skyhitz trades the vault from (against the Stellar DEX), its mode, last run, totals and recent actions.",
+          responses: { "200": json({ type: "object" }, "The bot's status.") },
+        },
+      },
     },
     components: {
       schemas: {

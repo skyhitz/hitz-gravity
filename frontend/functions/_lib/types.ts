@@ -61,6 +61,16 @@ export interface Env {
   // Bearer token used by the legacy reparation campaign endpoint.
   LEGACY_REPARATION_TOKEN: string;
 
+  // Arbitrage bot (_lib/arb-worker.ts). Mode "off" | "dry-run" | "live";
+  // the address is public, the secret is set with `wrangler secret put
+  // ARB_BOT_SECRET` and only ever read to sign the bot's own trades.
+  ARB_BOT_MODE?: string;
+  ARB_BOT_ADDRESS?: string;
+  ARB_BOT_SECRET?: string;
+  /** Optional overrides of the bot's defaults (numbers as strings). */
+  ARB_BOT_MIN_PROFIT_XLM?: string;
+  ARB_BOT_MAX_TRADE_XLM?: string;
+
   // Issuer of the USDC asset. Email accounts get a USDC trustline added
   // during bootstrap (and on every login, idempotent) so users can receive
   // USDC after swapping HITZ. The trustline reserve is sponsored by the

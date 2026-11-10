@@ -25,6 +25,10 @@ import { GET_LIQUIDITY, GET_PRICE_HISTORY, GET_TRACTION } from "./api/snapshots"
 import * as v1 from "./api/v1";
 import * as mcp from "./api/mcp";
 import { runIngest } from "./_lib/ingest";
+import { runArbBot } from "./_lib/arb-worker";
+
+/** The arbitrage bot's cron (wrangler.toml), offset from ingestion's "*\/5 * * * *". */
+const ARB_CRON = "2-59/5 * * * *";
 import type { Env } from "./_lib/types";
 
 type Handler = (
@@ -65,6 +69,7 @@ const ROUTES: Record<string, Handler> = {
   "GET /api/v1/tx": v1.GET_TX,
   "GET /api/v1/account": v1.GET_ACCOUNT,
   "GET /api/v1/openapi.json": v1.GET_OPENAPI,
+  "GET /api/v1/bot": v1.GET_BOT,
   "POST /mcp": mcp.POST,
   "GET /mcp": mcp.GET,
   "DELETE /mcp": mcp.DELETE,
@@ -102,12 +107,17 @@ export default {
     return handler(request, env, ctx);
   },
 
-  // Cron Trigger (wrangler.toml [triggers]) — on-chain data ingestion.
+  // Cron Triggers (wrangler.toml [triggers]): on-chain data ingestion, and
+  // the arbitrage bot on its own schedule.
   async scheduled(
-    _controller: ScheduledController,
+    controller: ScheduledController,
     env: Env,
     ctx: ExecutionContext
   ): Promise<void> {
+    if (controller.cron === ARB_CRON) {
+      ctx.waitUntil(runArbBot(env).then((report) => console.log("[arb]", JSON.stringify(report))));
+      return;
+    }
     ctx.waitUntil(
       runIngest(env).then((report) => console.log("[ingest]", JSON.stringify(report)))
     );

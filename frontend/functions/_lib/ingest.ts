@@ -849,7 +849,10 @@ async function rebuildTraction(env: Env) {
   } catch {
     sponsor = null;
   }
-  const routerSet = new Set([...routers, ...(sponsor ? [sponsor] : [])]);
+  // Our own arbitrage bot (ARB_BOT_ADDRESS) is infrastructure too, never one of the people.
+  const botVar = (env.ARB_BOT_ADDRESS ?? "").trim();
+  const bot = StellarSdk.StrKey.isValidEd25519PublicKey(botVar) ? botVar : null;
+  const routerSet = new Set([...routers, ...(sponsor ? [sponsor] : []), ...(bot ? [bot] : [])]);
   const poolSet = new Set(pools);
   const infra = [...new Set([...poolSet, ...routerSet])].filter((a) => a.startsWith("G"));
 

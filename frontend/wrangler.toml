@@ -58,8 +58,10 @@ migrations_dir = "migrations"
 
 # Ingestion cron (functions/_lib/ingest.ts). Soroban RPC keeps ~7 days of
 # events; every 5 minutes leaves a wide margin and keeps the price feed fresh.
+# The second schedule is the arbitrage bot (functions/_lib/arb-worker.ts),
+# offset by two minutes so the two never share an invocation.
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["*/5 * * * *", "2-59/5 * * * *"]
 
 # Native Cloudflare email binding — replaces the old MailChannels HTTP
 # call. No `destination_address` / `allowed_destination_addresses` means
@@ -93,3 +95,9 @@ LOW_BALANCE_THRESHOLD_XLM = "50"
 # the sponsor account, not held on the user's account, so the user's 1 XLM
 # starting balance stays usable.
 USDC_ISSUER = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+# Arbitrage bot (functions/_lib/arb-worker.ts, strategy in ARB_BOT.md).
+# "off" | "dry-run" (plans and simulates, sends nothing) | "live" (also needs
+# the secret: `npx wrangler secret put ARB_BOT_SECRET`, the key of this
+# address only). Status: GET /api/v1/bot.
+ARB_BOT_MODE = "dry-run"
+ARB_BOT_ADDRESS = ""

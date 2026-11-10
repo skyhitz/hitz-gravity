@@ -196,7 +196,12 @@ export default function IntegratePage() {
               <a className="text-accent hover:underline" href={`${GUIDE}#arbitrage`}>
                 arbitrage section
               </a>{" "}
-              of the contract guide shows how to size it.
+              of the contract guide shows how to size it. Skyhitz runs this trade itself with a{" "}
+              <a className="text-accent hover:underline" href="https://docs.skyhitz.io/vault/arbitrage-bot">
+                public bot
+              </a>{" "}
+              (its trades: <a className="text-accent hover:underline" href={`${API}/bot`}>/api/v1/bot</a>), and you can run
+              the same code with your own account.
             </Rule>
           </ul>
         </Section>
