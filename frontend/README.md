@@ -148,12 +148,23 @@ user's wallet.
 | GET    | `/api/v1/tx`               | Transaction status, swap decoded                   |
 | GET    | `/api/v1/account`          | Balances, trustlines, room under the Event Horizon |
 | GET    | `/api/v1/openapi.json`     | OpenAPI 3.1 description                            |
+| GET    | `/api/v1/bot`              | Our arbitrage bot: address, mode, last run, totals, recent trades |
 | POST   | `/mcp`                     | MCP server (Streamable HTTP, stateless): `get_vault`, `get_account`, `quote`, `build_swap`, `submit_transaction`, `get_transaction` |
 
 Quotes run `app/lib/vaultMath.ts` (the exact port of the contract math) on
 `pools()`, and `swap` simulates the transaction it returns, so both match
 the contract to the stroop. USD values come from the cron's liquidity
 snapshot. `/mcp` is listed in `run_worker_first` next to `/api/*`.
+
+### Arbitrage bot
+
+Skyhitz's own vault/SDEX arbitrage runs in the Worker on a second cron
+(`2-59/5 * * * *`): `functions/_lib/arb.ts` is the strategy,
+`functions/_lib/arb-worker.ts` the cron glue (D1 log in `arb_runs`, guards,
+alerts), and `scripts/arb-bot.mjs` runs the same strategy from Node for anyone.
+`ARB_BOT_MODE` (`off` / `dry-run` / `live`) and `ARB_BOT_ADDRESS` are vars;
+the key is a secret (`npx wrangler secret put ARB_BOT_SECRET`). Strategy,
+limits and guards: [`ARB_BOT.md`](./ARB_BOT.md).
 
 ## Legacy Reparation Campaign (one-time run)
 

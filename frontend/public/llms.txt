@@ -18,6 +18,7 @@ Key facts:
 - [OpenAPI description](https://skyhitz.io/api/v1/openapi.json)
 - [Integrate page](https://skyhitz.io/integrate/): setup for Claude, Claude Code, Cursor and other MCP clients, curl and JavaScript examples, live vault numbers
 - [Web app](https://skyhitz.io): trade with a Stellar wallet or an email account
+- [Arbitrage bot](https://docs.skyhitz.io/vault/arbitrage-bot): the bot Skyhitz runs between the vault and the Stellar DEX (its trades: https://skyhitz.io/api/v1/bot), and how to run your own
 
 ## Docs
 
