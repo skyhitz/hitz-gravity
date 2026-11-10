@@ -146,6 +146,12 @@ input { color: var(--foreground); }
 .nav-right { display: flex; align-items: center; gap: 16px; }
 .nav-link { color: var(--muted); font-size: 13px; text-decoration: none; transition: color 0.15s; }
 .nav-link:hover { color: var(--foreground); }
+@media (max-width: 560px) { .nav-link.wide-only { display: none; } }
+
+/* Pointer from the Trade tab to /integrate. */
+.trade-integrate { margin: 16px 0 0; font-size: 12px; color: var(--muted); text-align: center; }
+.trade-integrate a { color: var(--accent); text-decoration: none; }
+.trade-integrate a:hover { text-decoration: underline; }
 
 /* ─── Pulse bar (condensed protocol state) ───────────────────────────────── */
 

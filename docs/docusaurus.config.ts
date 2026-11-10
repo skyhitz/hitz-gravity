@@ -77,6 +77,7 @@ const config: Config = {
           items: [
             { label: 'Whitepaper', to: '/whitepaper' },
             { label: 'Integrating the vault', to: '/vault/integration' },
+            { label: 'API and MCP server', href: 'https://skyhitz.io/integrate/' },
             { label: 'Security review', to: '/security/audit' },
           ],
         },

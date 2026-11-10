@@ -1,12 +1,11 @@
 // Workers entrypoint. Replaces the Pages Functions auto-routing with an
 // explicit dispatch table so we can use bindings Pages doesn't support
 // (notably `send_email`). Static assets in out/ are served by the
-// [assets] binding; this Worker only runs for /api/* paths (see
+// [assets] binding; this Worker only runs for /api/* and /mcp (see
 // `run_worker_first` in wrangler.toml).
 //
 // Keeping the router as a plain object lookup — one line per endpoint,
-// O(1) dispatch, trivial to scan. No framework: 8 routes doesn't need
-// Hono/itty-router.
+// O(1) dispatch, trivial to scan. No framework needed.
 
 import { POST as authLogin } from "./api/auth/login";
 import { POST as authLogout } from "./api/auth/logout";
@@ -23,6 +22,8 @@ import { GET as gatewaySponsor } from "./api/gateway/sponsor";
 import { GET as holders } from "./api/holders";
 import { GET_CONTRACT_INFO, GET_EVENTS, GET_STATUS, GET_TX_INFO } from "./api/data";
 import { GET_LIQUIDITY, GET_PRICE_HISTORY, GET_TRACTION } from "./api/snapshots";
+import * as v1 from "./api/v1";
+import * as mcp from "./api/mcp";
 import { runIngest } from "./_lib/ingest";
 import type { Env } from "./_lib/types";
 
@@ -54,6 +55,20 @@ const ROUTES: Record<string, Handler> = {
   "GET /api/price/history": GET_PRICE_HISTORY,
   "GET /api/liquidity": GET_LIQUIDITY,
   "GET /api/traction": GET_TRACTION,
+  // Public vault API (api/v1.ts) and the MCP server for agents (api/mcp.ts).
+  "GET /api/v1": v1.GET_INDEX,
+  "GET /api/v1/": v1.GET_INDEX,
+  "GET /api/v1/vault": v1.GET_VAULT,
+  "GET /api/v1/quote": v1.GET_QUOTE,
+  "POST /api/v1/swap": v1.POST_SWAP,
+  "POST /api/v1/submit": v1.POST_SUBMIT,
+  "GET /api/v1/tx": v1.GET_TX,
+  "GET /api/v1/account": v1.GET_ACCOUNT,
+  "GET /api/v1/openapi.json": v1.GET_OPENAPI,
+  "POST /mcp": mcp.POST,
+  "GET /mcp": mcp.GET,
+  "DELETE /mcp": mcp.DELETE,
+  "OPTIONS /mcp": mcp.OPTIONS,
 };
 
 export default {
@@ -68,11 +83,16 @@ export default {
     // assets binding. In practice this branch rarely runs because
     // `run_worker_first = ["/api/*"]` keeps non-API traffic on the assets
     // side, but it's the correct fallback if that config ever drifts.
-    if (!url.pathname.startsWith("/api/")) {
+    if (!url.pathname.startsWith("/api/") && url.pathname !== "/mcp") {
       return env.ASSETS.fetch(request);
     }
 
     const handler = ROUTES[`${request.method} ${url.pathname}`];
+    // The public API answers browsers from any origin: preflights and 404s carry CORS.
+    if (url.pathname === "/api/v1" || url.pathname.startsWith("/api/v1/")) {
+      if (request.method === "OPTIONS") return v1.OPTIONS();
+      if (!handler) return v1.notFound();
+    }
     if (!handler) {
       return new Response(JSON.stringify({ error: "not found" }), {
         status: 404,

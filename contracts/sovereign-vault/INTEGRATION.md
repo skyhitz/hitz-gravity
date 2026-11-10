@@ -6,6 +6,11 @@ contract-caller pattern, the event layouts and the decay formula below are
 exercised by [`tests/integration_guide.rs`](tests/integration_guide.rs)
 against the real vault and HITZ token.
 
+Not writing contract code? [skyhitz.io/integrate](https://skyhitz.io/integrate/)
+has a keyless HTTP API (`https://skyhitz.io/api/v1`) and an MCP server for AI
+agents (`https://skyhitz.io/mcp`) that quote the vault and build swap
+transactions ready to sign with your own key.
+
 ## In one paragraph
 
 The vault is HITZ's own exchange: one constant-product pool per trusted
