@@ -1,0 +1,30 @@
+{
+  "name": "@skyhitz/docs",
+  "private": true,
+  "version": "2.0.0",
+  "description": "docs.skyhitz.io, built from this repository's own markdown",
+  "scripts": {
+    "sync": "node scripts/sync.mjs",
+    "prestart": "node scripts/sync.mjs",
+    "start": "docusaurus start",
+    "prebuild": "node scripts/sync.mjs",
+    "build": "docusaurus build",
+    "serve": "docusaurus serve",
+    "deploy": "npm run build && npx --yes wrangler@4 pages deploy build --project-name skyhitz-docs --branch main"
+  },
+  "dependencies": {
+    "@docusaurus/core": "3.10.2",
+    "@docusaurus/plugin-client-redirects": "3.10.2",
+    "@docusaurus/preset-classic": "3.10.2",
+    "clsx": "^2.1.1",
+    "prism-react-renderer": "^2.4.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@docusaurus/types": "3.10.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

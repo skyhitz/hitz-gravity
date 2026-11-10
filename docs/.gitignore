@@ -1,0 +1,5 @@
+node_modules/
+build/
+.docusaurus/
+# generated from the repo by scripts/sync.mjs
+content/
