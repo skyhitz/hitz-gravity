@@ -129,6 +129,32 @@ no destination restrictions so the gateway can mail arbitrary recipients
 | POST   | `/api/admin/legacy-reparation` | Send legacy migration email with claim magic-link |
 | GET    | `/api/gateway/sponsor`     | Ops — returns the gas-sponsor public key           |
 
+### Public vault API and MCP server
+
+Keyless, CORS-open, for bots, apps and AI agents (`functions/api/v1.ts`,
+`functions/api/mcp.ts`, logic in `functions/_lib/vault-api.ts`). Nothing
+here holds a key: `POST /api/v1/swap` returns an unsigned transaction for the
+caller's own account. The user-facing guide is the
+[Integrate page](https://skyhitz.io/integrate/) (`app/integrate/`), and
+`/sign` (`app/components/SignTransaction.tsx`) signs a built swap with the
+user's wallet.
+
+| Method | Path                       | What it does                                       |
+| ------ | -------------------------- | -------------------------------------------------- |
+| GET    | `/api/v1/vault`            | Pools, prices, fees, USD values, the Event Horizon |
+| GET    | `/api/v1/quote`            | Exact quote (`sell`, `buy`, `amount` or `buy_amount`, optional `account`) |
+| POST   | `/api/v1/swap`             | Unsigned, simulated swap transaction (base64 XDR) and sign links |
+| POST   | `/api/v1/submit`           | Relays a signed vault transaction, waits for the result |
+| GET    | `/api/v1/tx`               | Transaction status, swap decoded                   |
+| GET    | `/api/v1/account`          | Balances, trustlines, room under the Event Horizon |
+| GET    | `/api/v1/openapi.json`     | OpenAPI 3.1 description                            |
+| POST   | `/mcp`                     | MCP server (Streamable HTTP, stateless): `get_vault`, `get_account`, `quote`, `build_swap`, `submit_transaction`, `get_transaction` |
+
+Quotes run `app/lib/vaultMath.ts` (the exact port of the contract math) on
+`pools()`, and `swap` simulates the transaction it returns, so both match
+the contract to the stroop. USD values come from the cron's liquidity
+snapshot. `/mcp` is listed in `run_worker_first` next to `/api/*`.
+
 ## Legacy Reparation Campaign (one-time run)
 
 The campaign runs a **lazy claim** flow: emails kick off magic links, and the

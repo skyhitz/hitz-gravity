@@ -141,6 +141,9 @@ export default function Home() {
             </span>
           </div>
           <div className="nav-right">
+            <Link href="/integrate/" className="nav-link wide-only">
+              Integrate
+            </Link>
             <Link href="/whitepaper" className="nav-link">
               Whitepaper
             </Link>
@@ -223,6 +226,7 @@ export default function Home() {
           <p className="contract">{CONTRACT_ID}</p>
           <div className="footer-links">
             <Link href="/whitepaper">Whitepaper</Link>
+            <Link href="/integrate/">API &amp; MCP</Link>
             <a
               href="https://github.com/skyhitz/hitz-gravity"
               target="_blank"
@@ -254,7 +258,14 @@ export default function Home() {
 // ─── Panels ────────────────────────────────────────────────────────────────
 
 function TradePanel() {
-  return <VaultSwap />;
+  return (
+    <>
+      <VaultSwap />
+      <p className="trade-integrate">
+        Trading from a bot or an AI agent? <Link href="/integrate/">Use the API or the MCP server →</Link>
+      </p>
+    </>
+  );
 }
 
 function VaultPanel({ vaulted }: { vaulted: boolean | null }) {

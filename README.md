@@ -11,6 +11,9 @@ the **Sovereign Vault**. Powers the Skyhitz music platform.
 - **App:** [skyhitz.io](https://skyhitz.io)
 - **Docs:** [docs.skyhitz.io](https://docs.skyhitz.io), built from this
   repo's markdown by [`docs/`](./docs/)
+- **Integrate:** [skyhitz.io/integrate](https://skyhitz.io/integrate/): a
+  keyless HTTP API (`https://skyhitz.io/api/v1`) and an MCP server for AI
+  agents (`https://skyhitz.io/mcp`) that build swaps ready to sign
 - **Token on Stellar Expert:**
   [CBAPZAZN…OY4EU](https://stellar.expert/explorer/public/contract/CBAPZAZNNB4X3VPXV2LYA5RMV7XHXIVREES2GG7R5GUXDZ4R4CKOY4EU)
 - **Sovereign Vault on Stellar Expert:**
@@ -46,7 +49,7 @@ For testnet history, see [`TESTNET.md`](./TESTNET.md).
 contracts/gravity-token/      Soroban SEP-41 contract (Rust, soroban-sdk 25)
 contracts/sovereign-vault/    HITZ's own exchange: a pool per trusted asset (XLM, USDC, more later), dislocation fee
 research/vault-backtest/      The vault fee replayed on the real arbitrage history
-frontend/                     Next.js app (vault swap, Monitor) + Cloudflare Worker gateway and data cron
+frontend/                     Next.js app (vault swap, Monitor) + Cloudflare Worker: gateway, public API, MCP server, data cron
 docs/                         docs.skyhitz.io: a Docusaurus site built from this repo's markdown
 .github/workflows/contracts.yml  Tests, Wasm build + size check, mainnet migration rehearsal, swap budget
 .github/workflows/release.yml Reproducible token build → GitHub Release → Stellar Expert validation

@@ -32,15 +32,16 @@ main = "functions/worker.ts"
 compatibility_date = "2025-10-01"
 compatibility_flags = ["nodejs_compat"]
 
-# Static assets from the Next.js export. The Worker only runs for /api/*;
-# everything else (HTML, JS, CSS) is served directly off Cloudflare's
-# edge without invoking the Worker. `not_found_handling = "404-page"`
-# uses out/_not-found* as the 404 response for non-API misses.
+# Static assets from the Next.js export. The Worker only runs for /api/*
+# and /mcp (the MCP server for AI agents); everything else (HTML, JS, CSS)
+# is served directly off Cloudflare's edge without invoking the Worker.
+# `not_found_handling = "404-page"` uses out/_not-found* as the 404
+# response for non-API misses.
 [assets]
 directory = "./out"
 binding = "ASSETS"
 not_found_handling = "404-page"
-run_worker_first = ["/api/*"]
+run_worker_first = ["/api/*", "/mcp"]
 
 [[kv_namespaces]]
 binding = "MAGIC_LINKS"

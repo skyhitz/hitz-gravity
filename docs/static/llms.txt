@@ -1,0 +1,23 @@
+# Skyhitz docs: HITZ and the Sovereign Vault
+
+> Documentation for HITZ, a Soroban token on Stellar mainnet built on the Invariant Gravity Model, and for the Sovereign Vault, its own exchange with pools against XLM and USDC. To trade from code or an AI agent, use the keyless HTTP API or the MCP server described at https://skyhitz.io/integrate/ (project summary for language models: https://skyhitz.io/llms.txt).
+
+## Docs
+
+- [Overview](https://docs.skyhitz.io/): contracts, addresses and the model in one paragraph
+- [Whitepaper](https://docs.skyhitz.io/whitepaper): the Invariant Gravity Model and the Sovereign Vault
+- [Integrating the vault](https://docs.skyhitz.io/vault/integration): calls, errors, the fee math, events, arbitrage, calling from a contract or an account
+- [Security review](https://docs.skyhitz.io/security/audit): findings and status for the token and the vault
+- [Legal disclosure](https://docs.skyhitz.io/legal)
+
+## Trade
+
+- [MCP server](https://skyhitz.io/mcp): Streamable HTTP, no key; tools get_vault, get_account, quote, build_swap, submit_transaction, get_transaction
+- [HTTP API](https://skyhitz.io/api/v1) and its [OpenAPI description](https://skyhitz.io/api/v1/openapi.json)
+
+## Optional
+
+- [Migration from Aquarius](https://docs.skyhitz.io/vault/migration)
+- [Fee backtest](https://docs.skyhitz.io/security/fee-backtest)
+- [App and gateway](https://docs.skyhitz.io/app/frontend)
+- [Source code](https://github.com/skyhitz/hitz-gravity)

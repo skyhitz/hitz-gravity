@@ -1,0 +1,34 @@
+# Skyhitz: HITZ and the Sovereign Vault
+
+> HITZ is a Soroban token on Stellar mainnet built on the Invariant Gravity Model: an account holding more than the Event Horizon L = √S HITZ, where S is the HITZ held by registered pools, is "vaulted" and can only send HITZ back to a pool. HITZ trades on its own exchange, the Sovereign Vault, with constant-product pools against XLM and USDC. Bots, apps and AI agents can quote and build swaps through a keyless HTTP API or an MCP server; users always sign with their own wallet.
+
+Key facts:
+
+- HITZ token contract: CBAPZAZNNB4X3VPXV2LYA5RMV7XHXIVREES2GG7R5GUXDZ4R4CKOY4EU (7 decimals, max supply 100,000,000)
+- Sovereign Vault contract: CDEISYZM526FZJ4PDWNVKD7UHXFO4ATT46K47YTUQAOLWZQV64ANNBWU
+- Listed assets: XLM (CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA) and Circle USDC (CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75)
+- Fee: 1% per hop when the vault is calm, rising up to 10% while one asset is dislocated against another, then decaying back (2-hour time constant)
+- Event Horizon: about 9,900 HITZ today; live value at https://skyhitz.io/api/v1/vault (hitz.event_horizon)
+- The vault has no withdrawals, no LP tokens and no oracle; code changes and new listings wait 7 days
+
+## Trade HITZ
+
+- [MCP server](https://skyhitz.io/mcp): Streamable HTTP, no key. Tools: get_vault, get_account, quote, build_swap, submit_transaction, get_transaction. build_swap returns an unsigned transaction and a skyhitz.io/sign link where the user signs with their wallet.
+- [HTTP API](https://skyhitz.io/api/v1): GET /vault, GET /quote?sell=XLM&buy=HITZ&amount=100, POST /swap (unsigned transaction for an account), POST /submit (signed XDR), GET /tx?hash=, GET /account?address=
+- [OpenAPI description](https://skyhitz.io/api/v1/openapi.json)
+- [Integrate page](https://skyhitz.io/integrate/): setup for Claude, Claude Code, Cursor and other MCP clients, curl and JavaScript examples, live vault numbers
+- [Web app](https://skyhitz.io): trade with a Stellar wallet or an email account
+
+## Docs
+
+- [Overview](https://docs.skyhitz.io/)
+- [Whitepaper](https://docs.skyhitz.io/whitepaper): the Invariant Gravity Model and the Sovereign Vault
+- [Contract integration guide](https://docs.skyhitz.io/vault/integration): calls, errors, the fee math, events, arbitrage sizing, calling from a contract
+- [Security review](https://docs.skyhitz.io/security/audit)
+- [Legal disclosure](https://docs.skyhitz.io/legal)
+
+## Optional
+
+- [Source code](https://github.com/skyhitz/hitz-gravity): contracts, web app, API and MCP server
+- [Fee backtest](https://docs.skyhitz.io/security/fee-backtest)
+- [stellar.toml](https://skyhitz.io/.well-known/stellar.toml)
