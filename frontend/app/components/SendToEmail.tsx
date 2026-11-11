@@ -7,9 +7,10 @@
  * types in the same form:
  *
  *   Recipient (sniffed from input):
- *     (a) An email address — we derive the recipient's Stellar address,
- *         bootstrap it on-chain (with sponsored USDC trustline), transfer,
- *         then mail an auto-signin claim link.
+ *     (a) An email address: we look up the Stellar address derived for
+ *         it, transfer, then mail an auto-signin claim link. Nothing is
+ *         created on chain for the recipient: HITZ doesn't need an
+ *         account to be received.
  *     (b) A Stellar public key (G…) — direct transfer to the address.
  *
  *   Asset (chosen from a dropdown):
@@ -27,10 +28,13 @@
  * contract's, so we don't branch on asset type at submit time.
  *
  * Caveats:
- *   - For email recipients we only auto-add a USDC trustline. Sending an
- *     exotic trustline asset to a brand-new email derived account will
- *     fail at simulation ("trustline missing"). The error surfaces in the
- *     status row so the sender can switch to a different asset.
+ *   - What a recipient with no Stellar account yet can be sent: HITZ in
+ *     any amount (its balances live in the token contract), and XLM when
+ *     the transfer carries 1 XLM or more, which opens the account. USDC
+ *     and other classic assets need the recipient's trustline, so those
+ *     fail at simulation for an email that has never used its account or
+ *     an unfunded G-address. The status row says which it is
+ *     (lib/send-errors.ts), and the sender can send HITZ instead.
  *   - Native XLM uses its SAC, NOT a classic Payment op. The fee-bump
  *     gateway only signs Soroban inner txs, so going through the SAC
  *     keeps the email and wallet paths symmetric.
@@ -44,13 +48,13 @@ import { NETWORK_PASSPHRASE } from "../lib/stellar";
 import { HITZ_ADDRESS } from "../lib/tokens";
 import {
   type BalanceLine,
-  bootstrapAddress,
   getBalances,
   isValidEmail,
   notifyClaim,
   resolveEmail,
 } from "../lib/gateway";
 import { fmtFixed } from "../lib/format";
+import { recipientCantReceive } from "../lib/send-errors";
 
 // ─── Asset model ─────────────────────────────────────────────────────────
 
@@ -155,12 +159,7 @@ type TxState =
 // ─── Component ───────────────────────────────────────────────────────────
 
 export default function SendToEmail() {
-  const {
-    publicKey,
-    connectionType,
-    email: senderEmail,
-    callContract,
-  } = useWallet();
+  const { publicKey, callContract } = useWallet();
   const { balance: hitzBalance, refresh } = useProtocol();
 
   const [recipient, setRecipient] = useState("");
@@ -306,12 +305,11 @@ export default function SendToEmail() {
       return;
     }
 
-    // (1) Resolve + bootstrap recipient. SAC `transfer` rejects unfunded
-    //     destinations regardless of asset, and non-native assets also
-    //     require a destination trustline — for the email branch the
-    //     gateway auto-adds a USDC trustline as part of bootstrap, but
-    //     other classic assets won't have one (the simulation will fail
-    //     with a clear "trustline missing" if so).
+    // (1) Resolve the recipient. For an email that is a lookup of its
+    //     derived address; nothing is created on chain. HITZ lands either
+    //     way, and so does 1 XLM or more. USDC and other classic assets
+    //     need the recipient's trustline to exist already; without it the
+    //     simulation fails and we say why.
     let toAddr: string;
     let toEmailNormalized: string | null = null;
     setState({ kind: "resolving" });
@@ -325,12 +323,7 @@ export default function SendToEmail() {
       }
       toAddr = resolved.data.publicKey;
     } else {
-      const booted = await bootstrapAddress(trimmed);
-      if (!booted.ok) {
-        setState({ kind: "error", message: booted.error });
-        return;
-      }
-      toAddr = booted.data.publicKey;
+      toAddr = trimmed;
     }
 
     if (toAddr === publicKey) {
@@ -348,7 +341,10 @@ export default function SendToEmail() {
       StellarSdk.nativeToScVal(amountUnits, { type: "i128" }),
     ]);
     if (!tx.success || !tx.hash) {
-      setState({ kind: "error", message: tx.error || "Transfer failed" });
+      // Under 1 XLM to an address with no account, or an asset the recipient has no trustline for.
+      const cantReceive =
+        selected.key !== HITZ_KEY ? recipientCantReceive(tx.error, selected.symbol) : null;
+      setState({ kind: "error", message: cantReceive ?? (tx.error || "Transfer failed") });
       return;
     }
 
@@ -358,14 +354,8 @@ export default function SendToEmail() {
     const amountHuman = formatUnits(amountUnits, selected.decimals);
     if (toEmailNormalized) {
       setState({ kind: "notifying", toAddr, hash: tx.hash });
-      const fromLabel =
-        connectionType === "email" && senderEmail ? senderEmail : "A HITZ user";
-      await notifyClaim({
-        toEmail: toEmailNormalized,
-        amountHuman: `${amountHuman} ${selected.symbol}`,
-        fromLabel,
-        hash: tx.hash,
-      });
+      // The server reads the amount, asset and sender from the transaction.
+      await notifyClaim({ toEmail: toEmailNormalized, hash: tx.hash });
     }
 
     setState({
@@ -388,8 +378,6 @@ export default function SendToEmail() {
     callContract,
     refresh,
     refreshAssets,
-    connectionType,
-    senderEmail,
   ]);
 
   const busy =
@@ -399,7 +387,7 @@ export default function SendToEmail() {
 
   const statusText: string | null =
     state.kind === "resolving"
-      ? "Preparing recipient account…"
+      ? "Looking up the recipient…"
       : state.kind === "sending"
       ? `Sending ${selected?.symbol ?? "asset"} on-chain…`
       : state.kind === "notifying"
@@ -439,8 +427,8 @@ export default function SendToEmail() {
         }}
       >
         Send any asset on your account to anyone. For emails we derive the
-        recipient&apos;s Stellar account and mail them a claim link — they
-        sign in and the asset is already there.
+        recipient&apos;s Stellar account and mail them a claim link: they
+        sign in and it is already there.
       </p>
 
       <div className="field-group" style={{ marginBottom: 10 }}>

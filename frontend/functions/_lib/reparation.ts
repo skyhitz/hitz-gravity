@@ -12,8 +12,8 @@
 //   2. User clicks the email → /api/auth/verify consumes the token,
 //      establishes a session, then calls `redeemPendingReparation`. If a
 //      pending record exists for this email:
-//        a. Bootstrap the derived account + sponsored USDC trustline
-//           (idempotent).
+//        a. Create the derived account if it doesn't exist: fully
+//           sponsored, zero balance (idempotent).
 //        b. transfer(sponsor → derived, amount) on the HITZ contract.
 //        c. If `xlmAmount` is set, classic Payment(sponsor → derived,
 //           xlmAmount). Soroban + classic ops can't share a tx, so this
@@ -42,12 +42,13 @@ import {
   sendMail,
 } from "./email";
 import {
-  ensureBootstrappedWithUsdcTrustline,
+  ensureAccount,
   getSponsorAddress,
-  getSponsorXlmBalance,
+  getSponsorFunds,
   sendXlmFromSponsor,
   transferHitzFromSponsor,
 } from "./stellar";
+import { fromStroops } from "./reserves.ts";
 import * as StellarSdk from "@stellar/stellar-sdk";
 import { deriveKeypair, getServerKeys } from "./derive";
 import type { Env } from "./types";
@@ -191,9 +192,10 @@ export async function redeemPendingReparation(
     const { sponsorKeypair: sponsor } = await getServerKeys(env.MASTER_SECRET);
     const userKp = await deriveKeypair(email, env.MASTER_SECRET);
 
-    // (1) Bootstrap target + USDC trustline (sponsored). Idempotent —
-    // short-circuits if account already exists with the trustline.
-    await ensureBootstrappedWithUsdcTrustline(env, server, sponsor, userKp);
+    // (1) The account, if it doesn't exist yet: sponsored, zero balance.
+    // Not counted against the daily limit on new accounts: the operator
+    // queued this email. The XLM leg below needs the account to exist.
+    await ensureAccount(env, server, sponsor, userKp, email, { reason: "reparation", capped: false });
 
     // (2) HITZ SAC transfer. Persist the hash *before* attempting the
     // XLM leg so a partial failure can never re-pay HITZ on retry.
@@ -310,9 +312,13 @@ async function notifyClaimSuccess(
 }
 
 /**
- * Check the sponsor's XLM balance and fire a single alert email if it's
+ * Check what the sponsor can spend and fire a single alert email if it's
  * below the configured threshold. Debounced via a 24h KV key so the
- * operator inbox doesn't get spammed once we cross the line.
+ * operator inbox doesn't get spammed once we cross the line. Called after
+ * every claim and by the cron (sponsor-ops.ts).
+ *
+ * It goes by the spendable balance. The total includes everything locked
+ * in sponsored reserves, which the sponsor can't pay with.
  *
  * Failures here are swallowed — we don't want a missing Horizon to
  * propagate into a failed claim.
@@ -323,17 +329,16 @@ export async function maybeAlertLowBalance(env: Env): Promise<void> {
   const threshold = Number.parseFloat(thresholdStr);
   if (!Number.isFinite(threshold) || threshold <= 0) return;
 
-  let balanceStr: string;
+  let funds;
   try {
-    balanceStr = await getSponsorXlmBalance(env);
+    funds = await getSponsorFunds(env);
   } catch (err) {
     console.error(
       `[reparation] sponsor balance check failed: ${err instanceof Error ? err.message : String(err)}`
     );
     return;
   }
-  const balance = Number.parseFloat(balanceStr);
-  if (!Number.isFinite(balance) || balance >= threshold) return;
+  if (Number(funds.spendable) / 1e7 >= threshold) return;
 
   // Debounce — only fire once per 24h window.
   const already = await env.MAGIC_LINKS.get(LOW_BALANCE_KEY);
@@ -348,7 +353,8 @@ export async function maybeAlertLowBalance(env: Env): Promise<void> {
     const sponsorAddress = await getSponsorAddress(env);
     const tmpl = renderLowBalanceAlertEmail({
       sponsorAddress,
-      balanceXlm: balanceStr,
+      spendableXlm: fromStroops(funds.spendable),
+      lockedXlm: fromStroops(funds.locked),
       thresholdXlm: thresholdStr,
       network,
     });

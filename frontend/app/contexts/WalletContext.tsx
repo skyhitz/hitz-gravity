@@ -17,8 +17,10 @@
  *                 /api/gateway/execute. The Worker derives the user's key
  *                 from the session cookie, inner-signs, wraps in a
  *                 FeeBumpTransaction signed by the sponsor, submits, polls.
- *                 The user's derived account is bootstrapped with 1 XLM on
- *                 first call (transparent to the UI).
+ *                 The user's derived account is created on its first call
+ *                 that can succeed, sponsored and with a zero balance
+ *                 (transparent to the UI). Only transfers of HITZ, XLM and
+ *                 USDC and vault swaps go through.
  *
  * The sign() export is kept for legacy scenario components that still hand
  * XDR to Freighter directly. New code should use callContract().
@@ -195,9 +197,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [connectionType, setConnectionType] = useState<ConnectionType>(null);
   const [connecting, setConnecting] = useState(false);
   const kitReady = useRef(false);
-  // One ensure-trustline call per email + isolate. Tracks the email we
-  // already retrofitted so reconnecting as a different user re-fires it.
-  const trustlineEnsuredFor = useRef<string | null>(null);
 
   // ── Init: runs once after hydration, client-only ──────────────────────────
   // Two independent restores:
@@ -278,23 +277,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       cleanupDisconnect?.();
     };
   }, []);
-
-  // Retrofit legacy email users with a USDC trustline on session detection.
-  // The verify endpoint already does this on fresh magic-link logins; this
-  // covers the (one-time) population that bootstrapped before the trustline
-  // flow shipped — they get the trustline on app load without re-logging in.
-  // Fire-and-forget: failures are surfaced server-side; the UI never blocks
-  // on the result.
-  useEffect(() => {
-    if (connectionType !== "email" || !email) return;
-    if (trustlineEnsuredFor.current === email) return;
-    trustlineEnsuredFor.current = email;
-    gateway.ensureTrustline().catch(() => {
-      // Reset so the next session-mount can retry. Server-side errors are
-      // logged in Worker logs; the UI has nothing useful to show here.
-      trustlineEnsuredFor.current = null;
-    });
-  }, [connectionType, email]);
 
   // ── Actions ───────────────────────────────────────────────────────────────
 

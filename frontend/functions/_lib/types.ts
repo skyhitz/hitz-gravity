@@ -33,18 +33,22 @@ export interface Env {
   RPC_URL: string;
   HORIZON_URL: string;
   NETWORK_PASSPHRASE: string;
-  BOOTSTRAP_STARTING_BALANCE: string;
+
+  // Gateway guards (numbers as strings; defaults in _lib/stellar.ts).
+  // Below this much spendable XLM the sponsor stops sponsoring. Default 5.
+  GATEWAY_MIN_SPONSOR_XLM?: string;
+  // New email accounts the gateway opens per day, all callers together.
+  // Each locks 1 XLM of the sponsor's balance (1.5 with USDC). Default 30.
+  GATEWAY_MAX_NEW_ACCOUNTS_PER_DAY?: string;
 
   // Operator inbox. Receives "user X just claimed Y HITZ" notices and
   // "sponsor balance is low" alerts. Free-text mailbox; anything that
   // can receive mail works.
   SUPPORT_EMAIL: string;
 
-  // XLM balance below which the sponsor account triggers a low-balance
-  // alert email to SUPPORT_EMAIL. Defaults to "50" if unset. Each user
-  // claim costs ~1 XLM (account bootstrap), so set this with enough
-  // headroom to top up before claims start failing. Numeric string;
-  // floats accepted.
+  // Spendable XLM (balance minus locked reserves) below which the sponsor
+  // account triggers a low-balance alert email to SUPPORT_EMAIL. Defaults
+  // to "50" if unset. Numeric string; floats accepted.
   LOW_BALANCE_THRESHOLD_XLM?: string;
 
   // Single secret — present only at runtime (never in source, never in

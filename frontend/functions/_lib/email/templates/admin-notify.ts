@@ -88,44 +88,50 @@ export function renderClaimNotifyEmail(args: ClaimNotifyArgs) {
 
 interface LowBalanceArgs {
   sponsorAddress: string;
-  balanceXlm: string;
+  /** What the sponsor can pay out or spend on fees. */
+  spendableXlm: string;
+  /** Held as reserves, mostly for the email accounts it sponsors. */
+  lockedXlm: string;
   thresholdXlm: string;
   network: "mainnet" | "testnet";
 }
 
 export function renderLowBalanceAlertEmail(args: LowBalanceArgs) {
-  const { sponsorAddress, balanceXlm, thresholdXlm, network } = args;
+  const { sponsorAddress, spendableXlm, lockedXlm, thresholdXlm, network } = args;
   const explorer =
     network === "mainnet"
       ? `https://stellar.expert/explorer/public/account/${sponsorAddress}`
       : `https://stellar.expert/explorer/testnet/account/${sponsorAddress}`;
-  const subject = `[HITZ] Sponsor balance low: ${balanceXlm} XLM`;
+  const subject = `[HITZ] Sponsor low: ${spendableXlm} XLM spendable`;
   const text = [
-    "The reparation sponsor account is running low on XLM.",
+    "The gas sponsor is running low on spendable XLM.",
     "",
     `Address:    ${sponsorAddress}`,
-    `Balance:    ${balanceXlm} XLM`,
+    `Spendable:  ${spendableXlm} XLM`,
+    `Locked:     ${lockedXlm} XLM (reserves, not spendable)`,
     `Threshold:  ${thresholdXlm} XLM`,
     `Explorer:   ${explorer}`,
     "",
-    "Each lazy claim costs ~1 XLM (account bootstrap). Top up before the",
-    "balance crosses the base reserve, or new claims will start failing.",
+    "The sponsor pays the fees of email users' transactions, locks 1 XLM",
+    "for each new email account, and pays legacy claims their XLM. Below",
+    "5 XLM spendable it stops sponsoring until it is topped up.",
     "",
     "This alert is debounced for 24 hours.",
   ].join("\n");
   const html = baseEmail(
     "Sponsor balance low",
     `
-      <p style="margin:0 0 16px;color:#cfd2dc;">The reparation sponsor account is running low on XLM.</p>
+      <p style="margin:0 0 16px;color:#cfd2dc;">The gas sponsor is running low on spendable XLM.</p>
       <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 24px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;color:#cfd2dc;">
         <tr><td style="padding:4px 12px 4px 0;color:#8a8f9a;">Address</td><td style="padding:4px 0;word-break:break-all;">${escapeHtml(sponsorAddress)}</td></tr>
-        <tr><td style="padding:4px 12px 4px 0;color:#8a8f9a;">Balance</td><td style="padding:4px 0;color:#fca5a5;">${escapeHtml(balanceXlm)} XLM</td></tr>
+        <tr><td style="padding:4px 12px 4px 0;color:#8a8f9a;">Spendable</td><td style="padding:4px 0;color:#fca5a5;">${escapeHtml(spendableXlm)} XLM</td></tr>
+        <tr><td style="padding:4px 12px 4px 0;color:#8a8f9a;">Locked</td><td style="padding:4px 0;">${escapeHtml(lockedXlm)} XLM (reserves, not spendable)</td></tr>
         <tr><td style="padding:4px 12px 4px 0;color:#8a8f9a;">Threshold</td><td style="padding:4px 0;">${escapeHtml(thresholdXlm)} XLM</td></tr>
       </table>
       <p style="margin:0 0 24px;">
         <a href="${escapeHtml(explorer)}" style="${buttonStyle}">View on Stellar Expert</a>
       </p>
-      <p style="margin:0 0 8px;color:#cfd2dc;">Each lazy claim costs ~1 XLM (account bootstrap). Top up before the balance crosses the base reserve, or new claims will start failing.</p>
+      <p style="margin:0 0 8px;color:#cfd2dc;">The sponsor pays the fees of email users' transactions, locks 1 XLM for each new email account, and pays legacy claims their XLM. Below 5 XLM spendable it stops sponsoring until it is topped up.</p>
       <p style="margin:0;color:#8a8f9a;font-size:13px;">This alert is debounced for 24 hours.</p>
     `
   );
