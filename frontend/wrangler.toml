@@ -25,7 +25,9 @@
 #
 #   # 4. Find the gas-sponsor address (deterministic from MASTER_SECRET):
 #   curl https://skyhitz.io/api/gateway/sponsor
-#   # → fund the returned G-address with testnet XLM (Friendbot works).
+#   # → fund the returned G-address with XLM. It is a hot wallet behind
+#   #   public endpoints: keep in it what a few weeks of use need, and let
+#   #   the low-balance alert ask for more.
 
 name = "hitz-gravity"
 main = "functions/worker.ts"
@@ -79,21 +81,25 @@ HITZ_CONTRACT_ID = "CBAPZAZNNB4X3VPXV2LYA5RMV7XHXIVREES2GG7R5GUXDZ4R4CKOY4EU"
 RPC_URL = "https://soroban-rpc.mainnet.stellar.gateway.fm"
 HORIZON_URL = "https://horizon.stellar.org"
 NETWORK_PASSPHRASE = "Public Global Stellar Network ; September 2015"
-# Starting XLM when the sponsor bootstraps a derived account. 1 XLM covers
-# base reserve + two subentries with room to spare.
-BOOTSTRAP_STARTING_BALANCE = "1.0"
+# Gateway guards (functions/_lib/stellar.ts, limits.ts). Email accounts are
+# created with a zero balance and fully sponsored: the sponsor locks 1 XLM
+# per account (1.5 with a USDC trustline) and gives none away.
+#   GATEWAY_MIN_SPONSOR_XLM: below this much SPENDABLE XLM the sponsor stops
+#     sponsoring transactions and new accounts until it is topped up.
+#   GATEWAY_MAX_NEW_ACCOUNTS_PER_DAY: new email accounts per day, all callers
+#     together. Raise it for a campaign; legacy reparation claims don't count.
+GATEWAY_MIN_SPONSOR_XLM = "5"
+GATEWAY_MAX_NEW_ACCOUNTS_PER_DAY = "30"
 # Operator inbox for "user X claimed Y HITZ" notices and sponsor low-balance
 # alerts. Free-text mailbox. Anything that can receive mail works.
 SUPPORT_EMAIL = "support@skyhitz.io"
-# XLM threshold below which the sponsor account fires a low-balance alert.
-# Each lazy claim costs ~1 XLM (account bootstrap), so leave headroom to top
-# up before claims start failing. Numeric string. Floats accepted.
+# Spendable XLM (balance minus locked reserves) below which the sponsor
+# account fires a low-balance alert, at most once a day. Checked by the cron
+# and after every claim. Numeric string. Floats accepted.
 LOW_BALANCE_THRESHOLD_XLM = "50"
-# USDC issuer (Centre on mainnet). Every email-derived account gets a
-# USDC trustline added during bootstrap so users can receive USDC after
-# swapping HITZ. The trustline subentry reserve (0.5 XLM) is sponsored by
-# the sponsor account, not held on the user's account, so the user's 1 XLM
-# starting balance stays usable.
+# USDC issuer (Circle on mainnet). An email account gets a USDC trustline the
+# first time it swaps into USDC; the sponsor holds that trustline's reserve
+# (0.5 XLM), so the account needs no XLM of its own.
 USDC_ISSUER = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 # Arbitrage bot (functions/_lib/arb-worker.ts, strategy in ARB_BOT.md).
 # "off" | "dry-run" (plans and simulates, sends nothing) | "live" (also needs

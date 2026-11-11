@@ -4,17 +4,21 @@
 // a real person (there's no account table — accounts are derived from
 // email, so "login" and "signup" are the same operation). We just:
 //   1. Validate the email shape.
-//   2. Generate a 32-byte random token, stash {email, createdAt} in KV
+//   2. Rate-limit: per caller address, per email, and overall. Each call
+//      sends an email from our domain to whatever address was typed.
+//   3. Generate a 32-byte random token, stash {email, createdAt} in KV
 //      with a 10-minute TTL.
-//   3. Email the user a link to /auth/verify?token=...
+//   4. Email the user a link to /auth/verify?token=...
 //
 // Returns {ok:true} either way on valid-looking emails so attackers can't
 // enumerate valid accounts (and because there's nothing to enumerate —
 // every email is "valid" in the sense that it derives an address).
 
 import { isValidEmail, renderMagicLinkEmail, sendMail } from "../../_lib/email";
-import { badRequest, json, readJson, serverError } from "../../_lib/http";
-import { normalizeEmail } from "../../_lib/derive";
+import { badRequest, clientIp, json, readJson, serverError, tooManyRequests } from "../../_lib/http";
+import { emailDigest, normalizeEmail } from "../../_lib/derive";
+import { loginLimits } from "../../_lib/limits";
+import { hit } from "../../_lib/rate-limit";
 import type { Env } from "../../_lib/types";
 
 // 10 minutes — short enough that a stolen link has tiny window, long enough
@@ -38,7 +42,10 @@ export async function POST(request: Request, env: Env): Promise<Response> {
     return badRequest("email required");
   }
   const email = normalizeEmail(body.email);
-  if (!isValidEmail(email)) return badRequest("invalid email");
+  if (!isValidEmail(email) || email.length > 254) return badRequest("invalid email");
+
+  const verdict = await hit(env.DB, loginLimits(clientIp(request), await emailDigest(email)));
+  if (!verdict.ok) return tooManyRequests(verdict.retryAfter);
 
   const token = randomToken();
   await env.MAGIC_LINKS.put(

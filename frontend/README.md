@@ -34,6 +34,7 @@ functions tsconfig instead).
 ```bash
 pnpm dev            # next dev on :3000
 pnpm build          # static export → out/
+pnpm test           # Logic tests (Node 22.6+): gateway policy, rate limits, reserves, account records, recovery, jobs
 ```
 
 ## Deploy
@@ -77,15 +78,18 @@ npx wrangler secret put MASTER_SECRET
 curl https://hitz.skyhitz.io/api/gateway/sponsor
 #   → { "publicKey": "G..." }
 
-# 6. Fund that G-address with testnet XLM (Friendbot is fine for testnet)
-curl "https://friendbot.stellar.org?addr=G..."
+# 6. Fund that G-address with XLM. It is a hot wallet behind public
+#    endpoints: keep in it what a few weeks of use need (see "Gateway
+#    guards" below) and let the low-balance alert ask for more.
 
 # 7. Create token used by /api/admin/legacy-reparation
 npx wrangler secret put LEGACY_REPARATION_TOKEN
 
 ```
 
-That's it. One secret, one funded account, and you're live.
+That's it. One secret, one funded account, and you're live. Apply the D1
+migrations too (`npx wrangler d1 migrations apply hitz-data --remote`): the
+gateway's rate limits and account registry live there.
 
 ### What the secret produces
 
@@ -123,9 +127,9 @@ no destination restrictions so the gateway can mail arbitrary recipients
 | GET    | `/api/auth/verify`         | Consume token → set session cookie                 |
 | GET    | `/api/auth/me`             | Current session ( 401 if none )                    |
 | POST   | `/api/auth/logout`         | Clear session cookie                               |
-| POST   | `/api/gateway/resolve`     | email → derived Stellar address                    |
-| POST   | `/api/gateway/execute`     | Fee-bumped Soroban contract call ( session req. )  |
-| POST   | `/api/gateway/notify`      | Mail a claim link to an email recipient            |
+| POST   | `/api/gateway/resolve`     | email → derived Stellar address ( lookup only )    |
+| POST   | `/api/gateway/execute`     | Fee-bumped transfer or vault swap ( session req. ) |
+| POST   | `/api/gateway/notify`      | Mail a claim link for a transfer found on chain    |
 | POST   | `/api/admin/legacy-reparation` | Send legacy migration email with claim magic-link |
 | GET    | `/api/gateway/sponsor`     | Ops — returns the gas-sponsor public key           |
 
@@ -166,6 +170,75 @@ alerts), and `scripts/arb-bot.mjs` runs the same strategy from Node for anyone.
 the key is a secret (`npx wrangler secret put ARB_BOT_SECRET`). Strategy,
 limits and guards: [`ARB_BOT.md`](./ARB_BOT.md).
 
+## Gateway guards
+
+The sponsor is a hot wallet behind public endpoints, so the gateway is built
+to give nothing away and to bound what anyone can make it spend.
+
+- **No gifts.** An email account is created with a zero balance. The sponsor
+  holds its reserve (1 XLM, and 0.5 XLM more for a USDC trustline) and pays
+  its fees; that XLM is locked, not spent, and comes back when the account is
+  merged. Every account the gateway creates, and every trustline it sponsors
+  for an account it didn't create, is recorded in D1 first
+  (`gateway_accounts`, with the digest the account's key derives from;
+  `functions/_lib/gateway-accounts.ts`), so the Worker can always open the
+  account again.
+- **Accounts only when needed.** Signing in and resolving an email create
+  nothing. An account is created the first time its owner makes a call that
+  simulates successfully (they have something to move), or claims a legacy
+  reparation. The USDC trustline is added the first time they swap into USDC.
+  HITZ can be sent to an email that has no account: its balances live in the
+  token contract. So can 1 XLM or more, which opens the account with the
+  sender's XLM. USDC needs the recipient's trustline first.
+- **`execute` is an allowlist** (`functions/_lib/gateway-policy.ts`): a
+  `transfer` of the account's own HITZ, XLM or USDC, or a vault `swap` of its
+  own funds. The simulation must need no signature but the account's own, and
+  its resource fee must be under 0.5 XLM. The sponsor's fee bid is 0.001 XLM
+  per operation.
+- **`notify` needs the transfer.** It mails a claim link only for a recent,
+  successful transfer to the address derived from that email, once per
+  transfer, and takes the amount and asset from the transaction.
+- **Rate limits** in D1 (`functions/_lib/limits.ts`), per caller address
+  (an IPv6 /64 counts as one), per email or account, and overall:
+
+  | What | Per caller / email / account | Overall |
+  |---|---|---|
+  | Sign-in emails | 5 per 10 min and 30 a day per address; 3 per 10 min and 10 a day per email | 300 an hour |
+  | Claim emails | 10 requests an hour per address; 5 emails a day per recipient | 200 an hour |
+  | Lookups (`resolve`) | 60 per 10 min per address | |
+  | Sponsored transactions | 30 attempts an hour and 100 a day per account | 500 sent a day |
+  | New email accounts | 5 a day per address | `GATEWAY_MAX_NEW_ACCOUNTS_PER_DAY` (30) |
+
+  The caller's own limits are checked first, and a request they refuse is
+  not counted against the overall ones, so one caller can't use up what
+  everyone shares. The overall totals are charged only for what is really
+  done: a claim email for a transfer found on chain, a transaction that
+  simulated successfully.
+
+- **A floor.** Below `GATEWAY_MIN_SPONSOR_XLM` (5) of spendable XLM the
+  sponsor stops sponsoring and `execute` answers 503.
+- **Alerts** to `SUPPORT_EMAIL`, at most one a day each, from the cron: the
+  sponsor's *spendable* balance under `LOW_BALANCE_THRESHOLD_XLM` (50), 15 or
+  more new email accounts in 24 hours, and an overall limit being reached.
+
+### Operator jobs
+
+Privileged actions on the sponsor are not HTTP endpoints. They are rows in D1
+(`admin_jobs`) that the cron runs one at a time and writes the result back
+to (`functions/_lib/admin-jobs.ts`, `sponsor-ops.ts`):
+
+```bash
+npx wrangler d1 execute hitz-data --remote --command \
+  "INSERT INTO admin_jobs (command) VALUES ('{\"type\":\"recovery-plan\"}')"
+npx wrangler d1 execute hitz-data --remote --command \
+  "SELECT id, status, result FROM admin_jobs ORDER BY id DESC LIMIT 3"
+```
+
+| Job | What it does |
+|---|---|
+| `{"type":"recovery-plan"}` | Counts the email accounts that were never used and whose reserve the sponsor can take back (`functions/_lib/recovery.ts`). Sends nothing. |
+| `{"type":"recovery-run","limit":N}` | Revokes the sponsorship of up to N (99 at most) of those accounts and pays the XLM that frees to the HITZ contract's admin, in one transaction. |
+
 ## Legacy Reparation Campaign (one-time run)
 
 The campaign runs a **lazy claim** flow: emails kick off magic links, and the
@@ -187,9 +260,12 @@ whose hash is already persisted.
 - Total rows: **825** (805 email rows + 20 on-chain rows)
 - HITZ pool to fund the sponsor: **46,149.3881937 HITZ**
 - XLM payouts to fund the sponsor: **3,708.0183674 XLM**
-- One-time bootstrap reserves (~1 XLM × 805 email rows): **~805 XLM**
+- Account reserves (1 XLM locked per email row that claims, 805 at most;
+  sponsored, not given away): **up to ~805 XLM**
 - Operational buffer (fees + base reserve + slack): **~50 XLM**
-- **Recommended sponsor XLM funding: ~4,565 XLM** (3,708 + 805 + 50)
+- **Sponsor XLM if every row claimed: ~4,565 XLM** (3,708 + 805 + 50). Claims
+  are lazy, so fund what the next weeks need and top up on the alert, rather
+  than parking it all in the hot wallet.
 
 The 20 on-chain rows in the v6 CSV have `reparation_xlm_amount = 0`, so the
 on-chain branch only sends HITZ for those rows. (Only the email-magic-link
@@ -216,7 +292,7 @@ contract admin runs from a wallet (these are NOT in code, do them by hand):
 
 3. **Fund sponsor XLM.** Required total =
    `sum(reparation_xlm_amount)` (user payouts)
-   `+ ~1 XLM × email-row count` (one-time bootstrap reserves)
+   `+ 1 XLM × email rows that claim` (account reserves, locked not spent)
    `+ buffer` (fees + base reserve + slack).
 
    For the v6 CSV: **~4,565 XLM** total. Sponsor address comes from
@@ -238,9 +314,9 @@ contract admin runs from a wallet (these are NOT in code, do them by hand):
    - **email present:** POST `{ email, amount, xlmAmount? }` to the admin
      endpoint. Endpoint records a pending reparation in KV (1-year TTL) and
      sends the magic-link email. Both legs move only when the user clicks
-     the link and `/api/auth/verify` redeems the record (bootstrap + HITZ
-     SAC transfer + optional XLM Payment, all inline within the verify
-     request).
+     the link and `/api/auth/verify` redeems the record (account creation,
+     sponsored and with a zero balance, + HITZ transfer + optional XLM
+     Payment, all inline within the verify request).
    - **email empty:** transfer `new_hitz_amount` HITZ directly from the
      sponsor to `publicKey`, then (if `reparation_xlm_amount > 0`) submit
      a separate native Payment for the XLM amount. Both require the

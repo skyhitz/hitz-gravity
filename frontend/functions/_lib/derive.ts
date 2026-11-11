@@ -104,10 +104,25 @@ export function getServerKeys(masterSecretHex: string): Promise<ServerKeys> {
 
 // ─── Per-user derivation ─────────────────────────────────────────────────
 
-async function deriveUserSeed(email: string, root: Uint8Array): Promise<Uint8Array> {
-  const normalized = normalizeEmail(email);
-  const emailHash = await sha256(new TextEncoder().encode(normalized));
-  return sha256(concat(root, emailHash));
+/**
+ * SHA-256 of the normalized email, in hex: the only thing about the email
+ * that goes into its key. The gateway stores this digest for every account
+ * it creates (D1 `gateway_accounts`), so the account can be found and its
+ * sponsored reserve reclaimed later without keeping the address itself.
+ */
+export async function emailDigest(email: string): Promise<string> {
+  return bytesToHex(await sha256(new TextEncoder().encode(normalizeEmail(email))));
+}
+
+/** The Stellar Keypair for an email digest (see `emailDigest`). */
+export async function deriveKeypairFromDigest(
+  digestHex: string,
+  masterSecretHex: string
+): Promise<Keypair> {
+  if (!/^[0-9a-f]{64}$/.test(digestHex)) throw new Error("invalid email digest");
+  const keys = await getServerKeys(masterSecretHex);
+  const seed = await sha256(concat(keys.userSeedRoot, hexToBytes(digestHex)));
+  return Keypair.fromRawEd25519Seed(Buffer.from(seed));
 }
 
 /**
@@ -118,9 +133,7 @@ export async function deriveKeypair(
   email: string,
   masterSecretHex: string
 ): Promise<Keypair> {
-  const keys = await getServerKeys(masterSecretHex);
-  const seed = await deriveUserSeed(email, keys.userSeedRoot);
-  return Keypair.fromRawEd25519Seed(Buffer.from(seed));
+  return deriveKeypairFromDigest(await emailDigest(email), masterSecretHex);
 }
 
 /** Convenience — just the G-address, no private material held in memory. */

@@ -1,26 +1,43 @@
 // Server-side Stellar helpers for the gateway.
 //
 // Responsibilities:
-//   1. Bootstrap a brand-new derived account (first outbound tx only).
-//   2. Given a high-level contract call {contractId, method, argsXdr[]},
-//      build it with source=derived, simulate, assemble, sign-inner,
-//      fee-bump with sponsor, submit, poll for final status.
-//   3. Submit plain classic ops (for account bootstrap / claim flows)
-//      fee-paid directly by the sponsor.
+//   1. Run a contract call for an email account: simulate it, check it,
+//      create the account if this is its first real action, inner-sign with
+//      the derived key, fee-bump with the sponsor, submit, poll.
+//   2. Create an email account: fully sponsored, with a zero balance, and
+//      recorded in D1 so its reserve can be reclaimed.
+//   3. Sponsor-sourced calls and payments for the legacy reparation claims.
 //   4. Transparently restore archived Soroban state when the simulation
-//      comes back with a `restorePreamble`. Soroban ledger entries have a
-//      ~30 day TTL; once archived they can't be read/written until a
-//      RestoreFootprintOp pays to bring them back. We do that inline as
-//      part of the gas station — the user never sees it.
+//      comes back with a `restorePreamble`.
 //
-// The sponsor covers all fees. Derived accounts hold 1 XLM (reserve) but
-// never pay Soroban fees — the fee-bump outer envelope is signed by the
-// sponsor and its fee field absorbs the cost. This matches the "gas
-// station" architecture: custodial users never touch XLM.
+// The sponsor pays every fee and holds every reserve; an email account never
+// needs XLM of its own. What the sponsor never does is give XLM away, or act
+// for a caller it hasn't verified. It is a hot wallet behind public
+// endpoints: anything it hands out for the asking can be collected in bulk.
 
 import * as StellarSdk from "@stellar/stellar-sdk";
-import { getServerKeys } from "./derive";
+import { emailDigest, getServerKeys } from "./derive";
+import { recordSponsored } from "./gateway-accounts.ts";
+import { FEE_BUMP_BASE_FEE, MAX_RESOURCE_FEE, onlySourceAuth, type AllowedCall, type GatewayPolicy } from "./gateway-policy.ts";
+import { NEW_ACCOUNTS_PER_DAY, newAccountLimits, sponsoredLimits } from "./limits.ts";
+import { hit } from "./rate-limit.ts";
+import { nativeFunds, type NativeFunds } from "./reserves.ts";
 import type { Env } from "./types";
+
+/** A refusal the caller can act on, with the HTTP status to send it with. */
+export class GatewayError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+/** A numeric [vars] setting, or its default when unset or unreadable. */
+function numberVar(value: string | undefined, fallback: number): number {
+  const n = value === undefined || value.trim() === "" ? NaN : Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
 
 /**
  * If `sim.restorePreamble` is set, the user's transaction touched archived
@@ -62,6 +79,9 @@ async function maybeRestoreFootprint(
   const restoreSim = await server.simulateTransaction(draft);
   if (StellarSdk.rpc.Api.isSimulationError(restoreSim)) {
     throw new Error(`restore simulation failed: ${restoreSim.error}`);
+  }
+  if (BigInt(restoreSim.minResourceFee) > MAX_RESOURCE_FEE) {
+    throw new GatewayError(400, "Restoring this account's archived data costs more than the gateway sponsors.");
   }
   const assembled = StellarSdk.rpc.assembleTransaction(draft, restoreSim).build();
   assembled.sign(sponsor);
@@ -222,86 +242,143 @@ async function pollForSuccess(
   throw new Error(`tx ${hash} timed out waiting for finalization`);
 }
 
-/**
- * Create the derived account on chain if it doesn't exist. Idempotent —
- * a no-op when the account is already funded. Always safe to call before
- * any outbound action from a derived address.
- */
-export async function ensureAccountBootstrapped(
-  env: Env,
-  server: StellarSdk.rpc.Server,
-  sponsor: StellarSdk.Keypair,
-  targetPublicKey: string
-): Promise<void> {
-  const existing = await maybeGetAccount(server, targetPublicKey);
-  if (existing) return;
-  await sendClassicFromSponsor(env, server, sponsor, () =>
-    StellarSdk.Operation.createAccount({
-      destination: targetPublicKey,
-      startingBalance: env.BOOTSTRAP_STARTING_BALANCE,
-    })
-  );
-}
-
 export interface ExecuteResult {
   hash: string;
 }
 
+/** A contract call the gateway has agreed to make for an email account. */
+export interface SponsoredCall {
+  /** The account's keypair, derived from the session's email. */
+  userKp: StellarSdk.Keypair;
+  email: string;
+  contractId: string;
+  method: string;
+  args: StellarSdk.xdr.ScVal[];
+  /** What the call does, as read by `checkCall`. */
+  call: AllowedCall;
+  policy: GatewayPolicy;
+  /** The caller's address, for the per-address limit on new accounts. */
+  ip: string;
+}
+
+/** Refuse a simulated call the sponsor shouldn't pay for. */
+function checkSimulation(
+  sim: StellarSdk.rpc.Api.SimulateTransactionResponse
+): asserts sim is StellarSdk.rpc.Api.SimulateTransactionSuccessResponse {
+  if (StellarSdk.rpc.Api.isSimulationError(sim)) {
+    throw new GatewayError(400, `simulation failed: ${sim.error}`);
+  }
+  if (!StellarSdk.rpc.Api.isSimulationSuccess(sim) || !sim.result) {
+    throw new GatewayError(400, "simulation failed: no result");
+  }
+  // Recording-mode simulation lists every signature the call would need.
+  // Anything beyond the account's own would fail on chain, at the sponsor's cost.
+  if (!onlySourceAuth(sim.result.auth)) {
+    throw new GatewayError(403, "This call needs a signature from another address.");
+  }
+  if (BigInt(sim.minResourceFee) > MAX_RESOURCE_FEE) {
+    throw new GatewayError(400, "This call costs more in network fees than the gateway sponsors.");
+  }
+}
+
 /**
- * End-to-end: run a contract call on behalf of `userKp` with sponsor
- * paying via fee bump. Handles the bootstrap-if-missing path transparently.
+ * End-to-end: run a checked contract call for an email account, the sponsor
+ * paying through a fee bump.
  *
- *   1. Bootstrap the derived account if it doesn't exist yet.
- *   2. Build inner tx (source = user) via simulate + assembleTransaction.
- *   3. Inner sign with user's keypair.
- *   4. Wrap in FeeBumpTransaction (fee source = sponsor).
- *   5. Submit fee-bump, poll, return hash.
+ *   1. Refuse while the sponsor is below its operating floor.
+ *   2. For a swap that pays USDC to the account, make sure it can hold USDC.
+ *   3. Simulate. The account doesn't have to exist yet for this, so a call
+ *      that can't succeed (nothing to send, a bad swap) costs the sponsor
+ *      nothing and creates nothing.
+ *   4. If this is the email's first real action, create its account: fully
+ *      sponsored, zero balance, recorded in D1.
+ *   5. Build with the account's sequence, simulate again, assemble, sign with
+ *      the derived key, fee-bump with the sponsor, submit, poll.
+ *
+ * The day's total of sponsored transactions (limits.ts) is charged once, at
+ * the first point the sponsor is about to pay for something: calls that fail
+ * before that don't use it up.
  */
 export async function runSponsoredContractCall(
   env: Env,
-  userKp: StellarSdk.Keypair,
-  contractId: string,
-  method: string,
-  argsXdrBase64: string[]
+  req: SponsoredCall
 ): Promise<ExecuteResult> {
   const server = new StellarSdk.rpc.Server(env.RPC_URL);
   const { sponsorKeypair: sponsor } = await getServerKeys(env.MASTER_SECRET);
+  const self = req.userKp.publicKey();
 
-  // (1) Bootstrap if needed
-  await ensureAccountBootstrapped(env, server, sponsor, userKp.publicKey());
+  // (1)
+  await requireSponsorFunds(env);
 
-  // (2) Decode args and build prepared inner. prepareContractCall will
-  // transparently submit a sponsor-paid RestoreFootprintOp first if the
-  // user's state is archived (Soroban TTL, ~30 days of inactivity).
-  const args = argsXdrBase64.map((b64) =>
-    StellarSdk.xdr.ScVal.fromXDR(b64, "base64")
-  );
-  const prepared = await prepareContractCall(
-    env,
-    server,
-    sponsor,
-    userKp.publicKey(),
-    contractId,
-    method,
-    args
-  );
+  let charged = false;
+  const charge = async (): Promise<void> => {
+    if (charged) return;
+    charged = true;
+    const verdict = await hit(env.DB, sponsoredLimits());
+    if (!verdict.ok) {
+      const hours = Math.max(1, Math.ceil((verdict.retryAfter ?? 3600) / 3600));
+      throw new GatewayError(429, `The gateway has sponsored as many transactions as it does in a day. Try again in ${hours} hours.`);
+    }
+  };
 
-  // (3) Inner sign
-  prepared.sign(userKp);
+  // (2)
+  if (req.call.kind === "swap" && req.call.tokenOut === req.policy.usdc && req.call.to === self) {
+    await ensureUsdcTrustline(env, server, sponsor, req, charge);
+  }
 
-  // (4) Fee-bump wrap. `baseFee` is PER OPERATION — Soroban inner txs have
-  // one op, but fee-bump's baseFee must be ≥ 2x inner base fee by protocol
-  // rule. We use a generous 1 XLM / 10M stroops which is well above any
-  // realistic Soroban call on testnet.
+  // Each build bumps the Account object it is given, so every attempt gets
+  // its own, at the sequence number read from the ledger.
+  const contract = new StellarSdk.Contract(req.contractId);
+  const simulate = async (sequence: string) => {
+    const tx = new StellarSdk.TransactionBuilder(new StellarSdk.Account(self, sequence), {
+      fee: "100", // the sponsor's fee bump supersedes it
+      networkPassphrase: env.NETWORK_PASSPHRASE,
+    })
+      .addOperation(contract.call(req.method, ...req.args))
+      .setTimeout(60)
+      .build();
+    return { tx, sim: await server.simulateTransaction(tx) };
+  };
+
+  // (3)
+  let existing = await maybeGetAccount(server, self);
+  let { tx, sim } = await simulate(existing?.sequenceNumber() ?? "0");
+  if (StellarSdk.rpc.Api.isSimulationRestore(sim)) {
+    // Archived state: the sponsor restores it, then we look again.
+    await charge();
+    await maybeRestoreFootprint(env, server, sponsor, sim);
+    ({ tx, sim } = await simulate(existing?.sequenceNumber() ?? "0"));
+    if (StellarSdk.rpc.Api.isSimulationRestore(sim)) {
+      throw new Error("restore preamble persisted after restore tx");
+    }
+  }
+  checkSimulation(sim);
+  await charge();
+
+  // (4)
+  if (!existing) {
+    await ensureAccount(env, server, sponsor, req.userKp, req.email, {
+      reason: "execute",
+      ip: req.ip,
+      capped: true,
+    });
+    existing = await server.getAccount(self);
+    ({ tx, sim } = await simulate(existing.sequenceNumber()));
+    checkSimulation(sim);
+  }
+
+  // (5) `baseFee` is the sponsor's inclusion bid per operation; the SDK adds
+  // the inner transaction's resource fee on top.
+  const prepared = StellarSdk.rpc.assembleTransaction(tx, sim).build();
+  prepared.sign(req.userKp);
   const feeBump = StellarSdk.TransactionBuilder.buildFeeBumpTransaction(
     sponsor,
-    "10000000",
+    FEE_BUMP_BASE_FEE,
     prepared,
     env.NETWORK_PASSPHRASE
   );
   feeBump.sign(sponsor);
 
-  // (5) Submit + poll
   const resp = await server.sendTransaction(feeBump);
   if (resp.status === "ERROR") {
     const xdr = resp.errorResult?.toXDR("base64");
@@ -309,25 +386,6 @@ export async function runSponsoredContractCall(
   }
   const finalHash = await pollForSuccess(server, resp.hash);
   return { hash: finalHash };
-}
-
-/**
- * Classic payment (native XLM) from sponsor — unused today, kept for
- * symmetry in case we add claim flows that need it. The notify endpoint
- * doesn't send anything on-chain; the sender's transfer already did.
- */
-export async function sendSponsoredCreateAccount(
-  env: Env,
-  destination: string
-): Promise<string> {
-  const server = new StellarSdk.rpc.Server(env.RPC_URL);
-  const { sponsorKeypair: sponsor } = await getServerKeys(env.MASTER_SECRET);
-  return sendClassicFromSponsor(env, server, sponsor, () =>
-    StellarSdk.Operation.createAccount({
-      destination,
-      startingBalance: env.BOOTSTRAP_STARTING_BALANCE,
-    })
-  );
 }
 
 /**
@@ -473,16 +531,15 @@ function toStroopsI128(amount: string): StellarSdk.xdr.Int128Parts {
 }
 
 /**
- * Read the sponsor account's native (XLM) balance from Horizon. Returns
- * the balance as a decimal string (e.g. "143.7651234"). Throws if the
- * account is missing — the operator must fund the sponsor before any
- * claim flow can run.
+ * The sponsor's XLM: what it holds, what is locked in reserves (its own and
+ * the ones it sponsors for email accounts), and what it can actually spend.
+ * Throws if the account is missing.
  *
- * We use Horizon (REST) rather than RPC because RPC's getAccount returns
- * only sequence + signers, not balances. Horizon is the canonical place
- * for classic balance queries.
+ * Alerts and the operating floor go by `spendable`. The total is no guide:
+ * nearly all of it can be locked in reserves with almost nothing left to
+ * pay with.
  */
-export async function getSponsorXlmBalance(env: Env): Promise<string> {
+export async function getSponsorFunds(env: Env): Promise<NativeFunds> {
   const { sponsorKeypair: sponsor } = await getServerKeys(env.MASTER_SECRET);
   const info = await getAccountInfo(env, sponsor.publicKey());
   if (!info.exists) {
@@ -490,9 +547,23 @@ export async function getSponsorXlmBalance(env: Env): Promise<string> {
       `gas sponsor account ${sponsor.publicKey()} is not funded on chain.`
     );
   }
-  const native = info.balances.find((b) => b.asset_type === "native");
-  if (!native) throw new Error("sponsor account has no native balance entry");
-  return native.balance;
+  return nativeFunds(info);
+}
+
+/**
+ * Refuse sponsored work while the sponsor can spend less than its operating
+ * floor (`GATEWAY_MIN_SPONSOR_XLM`, 5 XLM unless set). Running it to zero
+ * leaves claims half-paid and nothing for the operator to act with.
+ */
+export async function requireSponsorFunds(env: Env): Promise<void> {
+  const floor = numberVar(env.GATEWAY_MIN_SPONSOR_XLM, 5);
+  const funds = await getSponsorFunds(env);
+  if (Number(funds.spendable) / 1e7 < floor) {
+    throw new GatewayError(
+      503,
+      "The gateway's gas sponsor needs a top-up. Sponsored transactions are paused until then."
+    );
+  }
 }
 
 // ─── Read-only contract views ────────────────────────────────────────────
@@ -546,11 +617,17 @@ export interface BalanceLine {
   asset_issuer?: string;
   /** Trustline limit (display units). Absent for native. */
   limit?: string;
+  /** Committed to open offers (display units). */
+  selling_liabilities?: string;
 }
 
 export interface AccountInfo {
   exists: boolean;
   balances: BalanceLine[];
+  /** Reserve counters, as Horizon reports them (zero for a missing account). */
+  subentry_count: number;
+  num_sponsoring: number;
+  num_sponsored: number;
 }
 
 /**
@@ -569,13 +646,19 @@ export async function getAccountInfo(
   const url = `${env.HORIZON_URL.replace(/\/$/, "")}/accounts/${publicKey}`;
   const resp = await fetch(url, { headers: { Accept: "application/json" } });
   if (resp.status === 404) {
-    return { exists: false, balances: [] };
+    return { exists: false, balances: [], subentry_count: 0, num_sponsoring: 0, num_sponsored: 0 };
   }
   if (!resp.ok) {
     throw new Error(`horizon ${resp.status} fetching ${publicKey}`);
   }
-  const data = (await resp.json()) as { balances?: BalanceLine[] };
-  return { exists: true, balances: data.balances ?? [] };
+  const data = (await resp.json()) as Partial<AccountInfo>;
+  return {
+    exists: true,
+    balances: data.balances ?? [],
+    subentry_count: data.subentry_count ?? 0,
+    num_sponsoring: data.num_sponsoring ?? 0,
+    num_sponsored: data.num_sponsored ?? 0,
+  };
 }
 
 /**
@@ -597,28 +680,24 @@ function hasTrustline(
   );
 }
 
-// ─── Sponsored trustline ─────────────────────────────────────────────────
+// ─── Sponsored accounts and trustlines ───────────────────────────────────
 //
-// A sponsored trustline lets the sponsor pay the 0.5 XLM subentry reserve
-// instead of the user. This is the canonical Stellar pattern for custodial
-// accounts: the user's 1 XLM starting balance stays fully usable, and the
-// reserve is held in the sponsor's account (reclaimable if we ever decide
-// to remove the sponsorship later).
+// An email account pays for nothing: the sponsor holds the reserve of the
+// account entry (1 XLM) and of its USDC trustline (0.5 XLM), and the account
+// starts with a zero balance. That XLM is locked, not spent: it comes back
+// to the sponsor when the account is merged, which the Worker can do for any
+// account recorded in D1 `gateway_accounts`.
 //
-// Two flows:
+//   createSponsoredAccount     one tx: sponsor begins sponsoring, creates the
+//                              account with 0 XLM, optionally the account
+//                              adds its USDC trustline, sponsoring ends.
+//   addSponsoredUsdcTrustline  the trustline alone, for an existing account.
+//   ensureAccount              create if missing, within the daily limits,
+//                              and record it.
+//   ensureUsdcTrustline        for a swap that pays USDC to the account.
 //
-//   bootstrapAccountWithTrustline  — atomic createAccount + ChangeTrust in
-//                                    one tx. Used when the destination
-//                                    doesn't exist yet (lazy claim, first
-//                                    contact).
-//   addTrustlineSponsored          — separate tx adding a sponsored
-//                                    trustline to an existing account. Used
-//                                    for legacy users who bootstrapped
-//                                    before this flow shipped.
-//
-// Both txs require both signatures (sponsor as fee/source signer, user as
-// op-source signer for ChangeTrust + EndSponsoring). Soroban isn't
-// involved — these are classic ops only, so no fee-bump wrapper.
+// Both transactions carry two signatures (the sponsor's and the account's).
+// They are classic operations, so no fee-bump wrapper.
 
 const TRUSTLINE_LIMIT = "922337203685.4775807"; // i64 max in display units
 
@@ -627,24 +706,23 @@ function usdcAsset(env: Env): StellarSdk.Asset {
 }
 
 /**
- * One atomic tx: sponsor sponsors the user's reserves, sponsor creates
- * the user's account with `BOOTSTRAP_STARTING_BALANCE` XLM, user adds a
- * USDC trustline (reserve sponsored), user ends sponsorship.
+ * One atomic tx: the sponsor takes on the new account's reserves and creates
+ * it with a zero balance; with `withUsdcTrustline` the account also adds its
+ * USDC trustline, under the same sponsorship.
  *
- * Used when the user's account does NOT exist on chain yet — replaces a
- * bare `createAccount` so we never end up with bootstrapped accounts that
- * lack the trustline.
+ * The account gets no XLM. It needs none: its reserves are sponsored and its
+ * transactions are fee-bumped.
  */
-async function bootstrapAccountWithTrustline(
+async function createSponsoredAccount(
   env: Env,
   server: StellarSdk.rpc.Server,
   sponsor: StellarSdk.Keypair,
-  userKp: StellarSdk.Keypair
+  userKp: StellarSdk.Keypair,
+  withUsdcTrustline: boolean
 ): Promise<string> {
   const sponsorAcct = await loadSponsorAccount(server, sponsor);
-  const tx = new StellarSdk.TransactionBuilder(sponsorAcct, {
-    // 4 ops × ~100 stroops each + headroom.
-    fee: "10000",
+  const builder = new StellarSdk.TransactionBuilder(sponsorAcct, {
+    fee: "10000", // per operation: 0.001 XLM
     networkPassphrase: env.NETWORK_PASSPHRASE,
   })
     .addOperation(
@@ -655,16 +733,19 @@ async function bootstrapAccountWithTrustline(
     .addOperation(
       StellarSdk.Operation.createAccount({
         destination: userKp.publicKey(),
-        startingBalance: env.BOOTSTRAP_STARTING_BALANCE,
+        startingBalance: "0",
       })
-    )
-    .addOperation(
+    );
+  if (withUsdcTrustline) {
+    builder.addOperation(
       StellarSdk.Operation.changeTrust({
         asset: usdcAsset(env),
         limit: TRUSTLINE_LIMIT,
         source: userKp.publicKey(),
       })
-    )
+    );
+  }
+  const tx = builder
     .addOperation(
       StellarSdk.Operation.endSponsoringFutureReserves({
         source: userKp.publicKey(),
@@ -673,17 +754,15 @@ async function bootstrapAccountWithTrustline(
     .setTimeout(60)
     .build();
 
-  // Both signatures: sponsor pays the fee + signs sponsorship/createAccount,
-  // user signs the ops sourced from their (newly-created) account.
+  // Both signatures: the sponsor pays the fee and creates the account, the
+  // new account signs the operations sourced from it.
   tx.sign(sponsor);
   tx.sign(userKp);
 
   const resp = await server.sendTransaction(tx);
   if (resp.status === "ERROR") {
     const xdr = resp.errorResult?.toXDR("base64");
-    throw new Error(
-      `bootstrap+trustline submit error${xdr ? `: ${xdr}` : ""}`
-    );
+    throw new Error(`account creation submit error${xdr ? `: ${xdr}` : ""}`);
   }
   return pollForSuccess(server, resp.hash);
 }
@@ -692,12 +771,8 @@ async function bootstrapAccountWithTrustline(
  * Add a sponsored USDC trustline to an account that already exists on
  * chain. Three ops: sponsor begins sponsoring, user changes trust, user
  * ends sponsoring. Both signatures required.
- *
- * Used by `ensureBootstrappedWithUsdcTrustline` when the account exists
- * but the trustline is missing (e.g. legacy user who bootstrapped before
- * this code shipped).
  */
-async function addTrustlineSponsored(
+async function addSponsoredUsdcTrustline(
   env: Env,
   server: StellarSdk.rpc.Server,
   sponsor: StellarSdk.Keypair,
@@ -742,31 +817,105 @@ async function addTrustlineSponsored(
 }
 
 /**
- * Make sure `userKp`'s account exists AND has the configured USDC
- * trustline. Idempotent. Three branches:
+ * Create the email's account if it doesn't exist. Returns true when it did.
  *
- *   1. Account doesn't exist  → atomic create+trustline (one tx)
- *   2. Account exists, missing → sponsored ChangeTrust (one tx)
- *   3. Account exists, present → no-op
+ * `capped` applies the daily limits on new accounts (all callers together,
+ * and per address): each one locks 1 XLM of the sponsor's balance, and with
+ * the trustline 1.5. Legacy reparation claims are not capped: the operator
+ * queued those emails.
  *
- * Returns true if any on-chain change was made (useful for callers that
- * want to log/notify), false if the account was already in the desired
- * state.
+ * The account is recorded before it is created (gateway-accounts.ts), so no
+ * account can exist that the Worker couldn't find and merge back later.
  */
-export async function ensureBootstrappedWithUsdcTrustline(
+export async function ensureAccount(
   env: Env,
   server: StellarSdk.rpc.Server,
   sponsor: StellarSdk.Keypair,
-  userKp: StellarSdk.Keypair
+  userKp: StellarSdk.Keypair,
+  email: string,
+  opts: { reason: "execute" | "reparation"; ip?: string; capped: boolean; withUsdcTrustline?: boolean }
 ): Promise<boolean> {
-  const info = await getAccountInfo(env, userKp.publicKey());
+  const address = userKp.publicKey();
+  if ((await getAccountInfo(env, address)).exists) return false;
+
+  if (opts.capped) {
+    const perDay = numberVar(env.GATEWAY_MAX_NEW_ACCOUNTS_PER_DAY, NEW_ACCOUNTS_PER_DAY);
+    const verdict = await hit(env.DB, newAccountLimits(opts.ip, perDay));
+    if (!verdict.ok) {
+      throw new GatewayError(429, "The gateway has opened as many new accounts as it does in a day. Try again tomorrow.");
+    }
+  }
+
+  await recordSponsored(env.DB, { address, emailDigest: await emailDigest(email), reason: opts.reason });
+
+  try {
+    await createSponsoredAccount(env, server, sponsor, userKp, opts.withUsdcTrustline ?? false);
+  } catch (err) {
+    // Two requests for the same new account: the other one created it.
+    if ((await getAccountInfo(env, address)).exists) return false;
+    throw err;
+  }
+  return true;
+}
+
+/**
+ * Make sure the account can hold USDC before a swap that pays USDC to it.
+ * The sponsor only commits a reserve for a swap that can happen: the account
+ * must hold what it sells, and the vault must quote at least the minimum.
+ */
+async function ensureUsdcTrustline(
+  env: Env,
+  server: StellarSdk.rpc.Server,
+  sponsor: StellarSdk.Keypair,
+  req: SponsoredCall,
+  /** Charges the day's total of sponsored transactions; called once the swap is known to be possible. */
+  charge: () => Promise<void>
+): Promise<void> {
+  if (req.call.kind !== "swap") return;
+  const self = req.userKp.publicKey();
+  const info = await getAccountInfo(env, self);
+  if (info.exists && hasTrustline(info.balances, "USDC", env.USDC_ISSUER)) return;
+
+  const address = (a: string) => StellarSdk.Address.fromString(a).toScVal();
+  const i128 = (v: bigint) => StellarSdk.nativeToScVal(v, { type: "i128" });
+  let held = 0n;
+  try {
+    held = BigInt((await simulateView(env, req.call.tokenIn, "balance", [address(self)])) as bigint);
+  } catch {
+    held = 0n; // the token can't report a balance for this account: it holds none
+  }
+  if (held < req.call.amountIn) {
+    throw new GatewayError(400, "simulation failed: the account doesn't hold enough to make this swap");
+  }
+  let quoted: bigint;
+  try {
+    quoted = BigInt(
+      (await simulateView(env, req.policy.vault, "quote", [
+        address(req.call.tokenIn),
+        address(req.call.tokenOut),
+        i128(req.call.amountIn),
+      ])) as bigint
+    );
+  } catch (err) {
+    throw new GatewayError(400, `simulation failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (quoted < req.call.minOut) {
+    throw new GatewayError(400, "simulation failed: the price moved past your slippage tolerance");
+  }
+
+  await charge();
   if (!info.exists) {
-    await bootstrapAccountWithTrustline(env, server, sponsor, userKp);
-    return true;
+    await ensureAccount(env, server, sponsor, req.userKp, req.email, {
+      reason: "execute",
+      ip: req.ip,
+      capped: true,
+      withUsdcTrustline: true,
+    });
+  } else {
+    // An account the gateway didn't create (opened by an incoming XLM
+    // transfer, or older than the record): written down before the sponsor
+    // locks the trustline's reserve for it.
+    await recordSponsored(env.DB, { address: self, emailDigest: await emailDigest(req.email), reason: "trustline" });
+    await addSponsoredUsdcTrustline(env, server, sponsor, req.userKp);
   }
-  if (!hasTrustline(info.balances, "USDC", env.USDC_ISSUER)) {
-    await addTrustlineSponsored(env, server, sponsor, userKp);
-    return true;
-  }
-  return false;
 }

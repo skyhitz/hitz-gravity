@@ -96,23 +96,16 @@ export function logout() {
 
 // ─── Gateway ─────────────────────────────────────────────────────────────
 
+/**
+ * The Stellar address derived for an email. A lookup only: nothing is
+ * created on chain. HITZ can be sent to it straight away, and so can 1 XLM
+ * or more (that opens the account); USDC needs the recipient's trustline,
+ * which they get the first time they swap into USDC.
+ */
 export function resolveEmail(email: string) {
   return call<{ publicKey: string }>("/api/gateway/resolve", {
     method: "POST",
     body: JSON.stringify({ email }),
-  });
-}
-
-/**
- * Ensure a typed-in G-address has a classic account on chain, creating
- * it (sponsor-funded) if not. Mirrors the side effect resolveEmail has
- * on the derived address. Needed because HITZ SAC transfer refuses
- * destinations without a classic account.
- */
-export function bootstrapAddress(address: string) {
-  return call<{ publicKey: string }>("/api/gateway/bootstrap", {
-    method: "POST",
-    body: JSON.stringify({ address }),
   });
 }
 
@@ -133,31 +126,14 @@ export function execute(
   });
 }
 
-export function notifyClaim(params: {
-  toEmail: string;
-  amountHuman: string;
-  fromLabel: string;
-  hash: string;
-}) {
+/**
+ * Mail the recipient of a transfer a claim link. The server reads the
+ * amount, asset and sender from the transaction `hash` itself.
+ */
+export function notifyClaim(params: { toEmail: string; hash: string }) {
   return call<{ ok: true }>("/api/gateway/notify", {
     method: "POST",
     body: JSON.stringify(params),
-  });
-}
-
-/**
- * Idempotently ensure the session user's derived account exists on chain
- * AND has the configured USDC trustline. WalletContext fires this once on
- * email-session detection so legacy users who bootstrapped before the
- * trustline flow can swap HITZ → USDC without re-logging in.
- *
- * `changed` is true when a tx was submitted (account created, trustline
- * added, or both); false when the account was already in the desired
- * state.
- */
-export function ensureTrustline() {
-  return call<{ changed: boolean }>("/api/gateway/ensure-trustline", {
-    method: "POST",
   });
 }
 

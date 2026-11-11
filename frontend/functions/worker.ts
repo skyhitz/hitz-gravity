@@ -13,8 +13,6 @@ import { GET as authMe } from "./api/auth/me";
 import { GET as authVerify } from "./api/auth/verify";
 import { POST as adminLegacyReparation } from "./api/admin/legacy-reparation";
 import { GET as gatewayBalances } from "./api/gateway/balances";
-import { POST as gatewayBootstrap } from "./api/gateway/bootstrap";
-import { POST as gatewayEnsureTrustline } from "./api/gateway/ensure-trustline";
 import { POST as gatewayExecute } from "./api/gateway/execute";
 import { POST as gatewayNotify } from "./api/gateway/notify";
 import { POST as gatewayResolve } from "./api/gateway/resolve";
@@ -26,6 +24,7 @@ import * as v1 from "./api/v1";
 import * as mcp from "./api/mcp";
 import { runIngest } from "./_lib/ingest";
 import { runArbBot } from "./_lib/arb-worker";
+import { runAdminJob, watchSponsor } from "./_lib/sponsor-ops";
 
 /** The arbitrage bot's cron (wrangler.toml), offset from ingestion's "*\/5 * * * *". */
 const ARB_CRON = "2-59/5 * * * *";
@@ -45,8 +44,6 @@ const ROUTES: Record<string, Handler> = {
   "GET /api/auth/verify": authVerify,
   "POST /api/admin/legacy-reparation": adminLegacyReparation,
   "GET /api/gateway/balances": gatewayBalances,
-  "POST /api/gateway/bootstrap": gatewayBootstrap,
-  "POST /api/gateway/ensure-trustline": gatewayEnsureTrustline,
   "POST /api/gateway/execute": gatewayExecute,
   "POST /api/gateway/notify": gatewayNotify,
   "POST /api/gateway/resolve": gatewayResolve,
@@ -107,19 +104,22 @@ export default {
     return handler(request, env, ctx);
   },
 
-  // Cron Triggers (wrangler.toml [triggers]): on-chain data ingestion, and
-  // the arbitrage bot on its own schedule.
+  // Cron Triggers (wrangler.toml [triggers]): on-chain data ingestion with
+  // the sponsor's upkeep, and on its own schedule the next operator job (if
+  // one is queued in D1) and the arbitrage bot.
   async scheduled(
     controller: ScheduledController,
     env: Env,
     ctx: ExecutionContext
   ): Promise<void> {
+    const logged = (tag: string, work: Promise<unknown>) =>
+      work
+        .then((report) => report && console.log(tag, JSON.stringify(report)))
+        .catch((err) => console.error(tag, "failed:", err instanceof Error ? err.message : String(err)));
     if (controller.cron === ARB_CRON) {
-      ctx.waitUntil(runArbBot(env).then((report) => console.log("[arb]", JSON.stringify(report))));
+      ctx.waitUntil(logged("[job]", runAdminJob(env)).then(() => logged("[arb]", runArbBot(env))));
       return;
     }
-    ctx.waitUntil(
-      runIngest(env).then((report) => console.log("[ingest]", JSON.stringify(report)))
-    );
+    ctx.waitUntil(logged("[ingest]", runIngest(env)).then(() => logged("[sponsor]", watchSponsor(env))));
   },
 };

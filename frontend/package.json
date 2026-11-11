@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "send:legacy-reparation": "node scripts/send-legacy-reparation.mjs",
-    "contract-report": "node scripts/contract-report.mjs"
+    "contract-report": "node scripts/contract-report.mjs",
+    "test": "node --experimental-strip-types --no-warnings --test \"tests/*.test.mjs\""
   },
   "dependencies": {
     "@creit.tech/stellar-wallets-kit": "^2.1.0",

@@ -1,28 +1,24 @@
 // POST /api/gateway/resolve  { email: string }
 //   → { publicKey: string }
 //
-// Given an email, return the Stellar address that would be derived for it
-// AND ensure that address is bootstrapped on-chain (funded with the base
-// reserve by the sponsor). Used by the "send HITZ to email" flow before
+// The Stellar address derived for an email. Used by "send to email" before
 // the sender issues `transfer(from, to, amount)`.
 //
-// Why the side effect: the HITZ SAC-backed token refuses transfers whose
-// destination has no classic account — simulation fails with
-// `Account not found: <G…>`. Pre-bootstrapping the derived address makes
-// the subsequent transfer land whether the sender is wallet-mode or
-// email-mode, first-time recipient or repeat.
+// This is a lookup and nothing else. It takes any email from anyone, with no
+// login, so it must never create or fund anything: whatever it gave out
+// could be collected in bulk.
 //
-// Abuse surface: bootstrap is idempotent and costs 1 XLM per brand-new
-// account. Address comes from an email hash, not caller-supplied, so an
-// attacker would have to spray unique emails to burn sponsor balance.
-// Fine on testnet; if we move to mainnet we'll gate this on a session
-// cookie or a challenge.
+// Nothing needs it to. HITZ doesn't need the account at all (its balances
+// live in the token contract), so a transfer to an email that has never
+// signed in works without one. So does a transfer of 1 XLM or more: the
+// asset contract opens the account with the sender's XLM. USDC needs the
+// recipient's trustline, which is added the first time they swap into USDC.
 
-import * as StellarSdk from "@stellar/stellar-sdk";
-import { deriveKeypair, getServerKeys } from "../../_lib/derive";
+import { deriveKeypair } from "../../_lib/derive";
 import { isValidEmail } from "../../_lib/email";
-import { badRequest, json, readJson, serverError } from "../../_lib/http";
-import { ensureBootstrappedWithUsdcTrustline } from "../../_lib/stellar";
+import { badRequest, clientIp, json, readJson, tooManyRequests } from "../../_lib/http";
+import { resolveLimits } from "../../_lib/limits";
+import { hit } from "../../_lib/rate-limit";
 import type { Env } from "../../_lib/types";
 
 interface Body {
@@ -35,20 +31,10 @@ export async function POST(request: Request, env: Env): Promise<Response> {
     return badRequest("email required");
   }
   if (!isValidEmail(body.email)) return badRequest("invalid email");
+
+  const verdict = await hit(env.DB, resolveLimits(clientIp(request)));
+  if (!verdict.ok) return tooManyRequests(verdict.retryAfter);
+
   const userKp = await deriveKeypair(body.email, env.MASTER_SECRET);
-  const publicKey = userKp.publicKey();
-
-  try {
-    const server = new StellarSdk.rpc.Server(env.RPC_URL);
-    const { sponsorKeypair } = await getServerKeys(env.MASTER_SECRET);
-    // Bootstrap target + sponsored USDC trustline. Idempotent — recipient
-    // accounts that already exist with the trustline short-circuit.
-    await ensureBootstrappedWithUsdcTrustline(env, server, sponsorKeypair, userKp);
-  } catch (err) {
-    return serverError(
-      `bootstrap failed: ${err instanceof Error ? err.message : String(err)}`
-    );
-  }
-
-  return json({ publicKey });
+  return json({ publicKey: userKp.publicKey() });
 }

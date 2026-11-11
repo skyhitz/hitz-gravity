@@ -8,24 +8,28 @@
 //   - Derive the user's Stellar keypair from email + MASTER_SEED.
 //   - Issue a 30-day session JWT as an HttpOnly cookie.
 //   - If a pending legacy-reparation record exists for this email,
-//     redeem it inline: bootstrap derived account + sponsor → user
-//     SAC transfer of the recorded amount. Failures here don't fail
-//     the login — the record stays around for retry on next login.
+//     redeem it inline: create the derived account (sponsored, zero
+//     balance) + sponsor → user transfers of the recorded amounts.
+//     Failures here don't fail the login: the record stays around for
+//     retry on next login.
 //   - Return {email, publicKey} (and {redeemed} on success) so the
 //     client can hydrate state and show a claim banner.
+//
+// Signing in does nothing else on chain. Anyone can sign in with any number
+// of emails, so nothing the sponsor pays for may depend on it alone. An
+// account is created the first time its owner does something that needs one
+// (_lib/stellar.ts).
 //
 // This is called by the /auth/verify/ page in the browser; the page then
 // redirects home. We don't redirect server-side — a 302 would work and
 // the Set-Cookie would still land, but keeping the client in control of
 // navigation lets us show an error state cleanly.
 
-import * as StellarSdk from "@stellar/stellar-sdk";
 import { deriveKeypair, getServerKeys } from "../../_lib/derive";
 import { json, unauthorized } from "../../_lib/http";
 import { signSession } from "../../_lib/jwt";
 import { redeemPendingReparation, type RedeemResult } from "../../_lib/reparation";
 import { SESSION_TTL_SECONDS, serializeSessionCookie } from "../../_lib/session";
-import { ensureBootstrappedWithUsdcTrustline } from "../../_lib/stellar";
 import type { Env, Session } from "../../_lib/types";
 
 interface TokenRecord {
@@ -58,9 +62,7 @@ export async function GET(
   const publicKey = userKp.publicKey();
   const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
   const session: Session = { email: record.email, publicKey, exp };
-  const { jwtSecret, sponsorKeypair: sponsor } = await getServerKeys(
-    env.MASTER_SECRET
-  );
+  const { jwtSecret } = await getServerKeys(env.MASTER_SECRET);
   const jwt = await signSession(session, jwtSecret);
 
   // Inline redemption of pending legacy reparation, if any. This is the
@@ -76,19 +78,6 @@ export async function GET(
     // but if anything escapes we still want the login to succeed.
     console.error(
       `[verify] unexpected redeem error: ${err instanceof Error ? err.message : String(err)}`
-    );
-  }
-
-  // Legacy-user retrofit: ensure the USDC trustline exists on every login.
-  // Reparation redemption already handles this for un-redeemed users; this
-  // covers the population that redeemed before the trustline flow shipped.
-  // Idempotent — no-op for accounts already in the desired state.
-  try {
-    const server = new StellarSdk.rpc.Server(env.RPC_URL);
-    await ensureBootstrappedWithUsdcTrustline(env, server, sponsor, userKp);
-  } catch (err) {
-    console.error(
-      `[verify] ensureBootstrappedWithUsdcTrustline failed: ${err instanceof Error ? err.message : String(err)}`
     );
   }
 
