@@ -105,5 +105,8 @@ USDC_ISSUER = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 # "off" | "dry-run" (plans and simulates, sends nothing) | "live" (also needs
 # the secret: `npx wrangler secret put ARB_BOT_SECRET`, the key of this
 # address only). Status: GET /api/v1/bot.
+# Optional, as numeric strings: ARB_BOT_MIN_PROFIT_XLM (the least a round trip
+# must earn after network fees, default "0.02") and ARB_BOT_MAX_TRADE_XLM (the
+# largest trade, default "150").
 ARB_BOT_MODE = "dry-run"
 ARB_BOT_ADDRESS = ""

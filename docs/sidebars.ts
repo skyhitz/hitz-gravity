@@ -8,7 +8,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Sovereign Vault',
       collapsed: false,
-      items: ['vault/integration', 'vault/arbitrage-bot', 'vault/migration'],
+      items: ['vault/integration', 'vault/arbitrage-bot', 'vault/arbitrage-bot-replay', 'vault/migration'],
     },
     {
       type: 'category',

@@ -20,5 +20,6 @@
 
 - [Migration from Aquarius](https://docs.skyhitz.io/vault/migration)
 - [Fee backtest](https://docs.skyhitz.io/security/fee-backtest)
+- [Arbitrage bot replay](https://docs.skyhitz.io/vault/arbitrage-bot-replay): the bot on five months of real SDEX prices
 - [App and gateway](https://docs.skyhitz.io/app/frontend)
 - [Source code](https://github.com/skyhitz/hitz-gravity)

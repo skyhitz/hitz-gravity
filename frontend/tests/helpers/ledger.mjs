@@ -94,7 +94,9 @@ export function makeLedger({ bid, ask, pools = MAINNET_POOLS, time = 1_794_420_0
     rpcDown: null, // (method) => boolean: answer that RPC call with HTTP 503
     horizonDown: null, // (path) => boolean
     tryAgainLater: 0, // answer this many sendTransaction calls with TRY_AGAIN_LATER
+    behind: 0, // answer this many sends of a vault transaction with txBadSeq, as an RPC node a ledger behind would
     omitMeta: false, // getTransaction without resultMetaXdr
+    voidReturn: false, // a vault swap whose return value is void instead of the amount
 
     fund(address, { xlm = "0", usdc = null, sequence = 1000n } = {}) {
       accounts.set(address, { xlm: units(xlm), usdc: usdc === null ? null : units(usdc), sequence: BigInt(sequence), subentries: usdc === null ? 0 : 1 });
@@ -213,7 +215,7 @@ export function makeLedger({ bid, ask, pools = MAINNET_POOLS, time = 1_794_420_0
     credit(source, call.tokenIn, -call.amountIn);
     credit(accounts.get(call.to), call.tokenOut, result.amountOut);
     entry.received = result.amountOut;
-    return succeeded(fee, tr(xdr.InvokeHostFunctionResult.invokeHostFunctionSuccess(Buffer.alloc(32))), ledger.omitMeta ? {} : { resultMetaXdr: sorobanMeta(i128(result.amountOut)) });
+    return succeeded(fee, tr(xdr.InvokeHostFunctionResult.invokeHostFunctionSuccess(Buffer.alloc(32))), ledger.omitMeta ? {} : { resultMetaXdr: sorobanMeta(ledger.voidReturn ? xdr.ScVal.scvVoid() : i128(result.amountOut)) });
   }
 
   function credit(account, token, amount) {
@@ -310,6 +312,10 @@ export function makeLedger({ bid, ask, pools = MAINNET_POOLS, time = 1_794_420_0
       }
       const signed = tx.signatures.some((s) => StellarSdk.Keypair.fromPublicKey(tx.source).verify(tx.hash(), s.signature()));
       if (!signed) return reject("txBadAuth");
+      if (ledger.behind > 0 && tx.operations[0].type === "invokeHostFunction") {
+        ledger.behind--;
+        return reject("txBadSeq");
+      }
       if (BigInt(tx.sequence) !== source.sequence + 1n) return reject("txBadSeq");
       if (!tx.timeBounds || Number(tx.timeBounds.maxTime) < ledger.time) return reject("txTooLate");
       const op = tx.operations[0];

@@ -331,6 +331,9 @@ test("the status tells off from dry-run from live, and shows a pause", async () 
   assert.equal((await botStatus(w.deps, w.vars({ mode: "dry-run" }))).mode, "dry-run");
   assert.equal((await botStatus(w.deps, w.vars({ secret: undefined }))).mode, "dry-run");
   assert.equal((await botStatus(w.deps, w.vars())).mode, "live");
+  // Live is what it does, not what was asked for: a key it can't trade with means dry runs.
+  assert.equal((await botStatus(w.deps, w.vars({ secret: StellarSdk.Keypair.random().secret() }))).mode, "dry-run");
+  assert.equal((await botStatus(w.deps, w.vars({ secret: "definitely-not-a-key" }))).mode, "dry-run");
   await w.deps.kv.put("arb:paused", "3 round trips stopped halfway in 24 hours (since 2026-11-11T00:00:00.000Z)");
   assert.match((await botStatus(w.deps, w.vars())).paused, /3 round trips/);
 });

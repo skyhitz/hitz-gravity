@@ -81,6 +81,19 @@ function settingsOf(vars: BotVars) {
 }
 
 const modeOf = (vars: BotVars) => (vars.mode ?? "off").trim().toLowerCase();
+
+/** The key live mode signs with: the account's own, or none and the reason why. The key itself is never reported. */
+function keyFor(vars: BotVars, address: string): { keypair?: StellarSdk.Keypair; note?: string; mismatch?: boolean } {
+  if (!vars.secret) return { note: "live mode, but ARB_BOT_SECRET isn't set: dry run" };
+  let keypair: StellarSdk.Keypair;
+  try {
+    keypair = StellarSdk.Keypair.fromSecret(vars.secret.trim());
+  } catch {
+    return { note: "ARB_BOT_SECRET isn't a valid secret key: dry run" };
+  }
+  if (keypair.publicKey() !== address) return { note: "ARB_BOT_SECRET belongs to another account than ARB_BOT_ADDRESS: dry run", mismatch: true };
+  return { keypair };
+}
 const nowMs = (deps: BotDeps) => deps.io?.now?.() ?? Date.now();
 
 export async function runBot(deps: BotDeps, vars: BotVars): Promise<Record<string, unknown>> {
@@ -91,24 +104,8 @@ export async function runBot(deps: BotDeps, vars: BotVars): Promise<Record<strin
   if (paused) return { skipped: `paused: ${paused}` };
 
   // Live needs the bot's own key; without it the run stays a dry run.
-  let keypair: StellarSdk.Keypair | undefined;
-  let note: string | undefined;
-  if (mode === "live") {
-    if (!vars.secret) {
-      note = "live mode, but ARB_BOT_SECRET isn't set: dry run";
-    } else {
-      try {
-        keypair = StellarSdk.Keypair.fromSecret(vars.secret.trim());
-      } catch {
-        note = "ARB_BOT_SECRET isn't a valid secret key: dry run";
-      }
-      if (keypair && keypair.publicKey() !== address) {
-        keypair = undefined;
-        note = "ARB_BOT_SECRET belongs to another account than ARB_BOT_ADDRESS: dry run";
-        await alertOnce(deps, vars, "key", "Arbitrage bot: key mismatch", `${note}. The bot isn't trading.`);
-      }
-    }
-  }
+  const { keypair, note, mismatch } = mode === "live" ? keyFor(vars, address) : ({} as ReturnType<typeof keyFor>);
+  if (mismatch) await alertOnce(deps, vars, "key", "Arbitrage bot: key mismatch", `${note}. The bot isn't trading.`);
 
   const report = await runOnce({
     rpcUrl: vars.rpcUrl,
@@ -251,7 +248,7 @@ interface Row {
 export async function botStatus(deps: BotDeps, vars: BotVars) {
   const address = botAddress(vars.address);
   const configured = modeOf(vars);
-  const mode = !address || configured === "off" ? "off" : configured === "live" && vars.secret ? "live" : "dry-run";
+  const mode = !address || configured === "off" ? "off" : configured === "live" && keyFor(vars, address).keypair ? "live" : "dry-run";
   const settings = settingsOf(vars);
   const now = nowMs(deps);
   const windows: [string, number | null][] = [["24h", DAY_S], ["7d", 7 * DAY_S], ["all", null]];

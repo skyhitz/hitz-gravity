@@ -300,6 +300,36 @@ test("a busy network's 'try again later' is retried", async () => {
   assert.deepEqual(ledger.submitted.map((e) => e.status), ["SUCCESS", "SUCCESS"]);
 });
 
+test("an RPC node a ledger behind refuses the vault leg's sequence number: it is sent again", async () => {
+  const { ledger, run } = world();
+  ledger.behind = 2;
+  const report = await run();
+  assert.equal(report.action, "trade", report.error ?? report.reason);
+  assert.deepEqual(ledger.submitted.map((e) => e.status), ["SUCCESS", "SUCCESS"]);
+});
+
+test("a sequence number that stays refused ends the round trip as incomplete, after a few tries", async () => {
+  const { ledger, run } = world();
+  ledger.behind = 1000;
+  const report = await run();
+  assert.equal(report.action, "trade-incomplete");
+  assert.equal(report.vaultLeg.status, "REJECTED");
+  assert.equal(report.vaultLeg.code, "txBadSeq");
+  const sends = ledger.calls.filter((c) => c === "rpc sendTransaction").length;
+  assert.ok(sends >= 3 && sends <= 6, `${sends} sends for two transactions`);
+});
+
+test("a vault leg that returns something other than an amount is still a finished trade", async () => {
+  const { ledger, address, run } = world();
+  const before = ledger.account(address);
+  ledger.voidReturn = true;
+  const report = await run();
+  assert.equal(report.action, "trade", report.error ?? report.reason);
+  const after = ledger.account(address);
+  const gained = xlm(after.xlm - before.xlm) + xlm(after.usdc - before.usdc) / SDEX.ask;
+  assert.ok(Math.abs(report.profitXlm - gained) < 1e-4, `reported ${report.profitXlm}, gained ${gained}`);
+});
+
 test("a vault leg whose return value can't be read is still a finished trade", async () => {
   const { ledger, address, run } = world();
   const before = ledger.account(address);

@@ -72,9 +72,9 @@ export interface ArbConfig {
  * fair, and what the bot doesn't keep stays in the vault as fees. Replayed on
  * the SDEX's prices of Jun 12 to Nov 11, 2026 at the vault's depth then, 0.02
  * XLM kept the vault 2.1% from the market on average (8.6% with no bot) on
- * about 7 trades a day of 5 XLM, each earning about 0.5% (ARB_BOT.md). The 30
+ * about 7 trades a day of 5 XLM, each earning about 0.6% (ARB_BOT.md). The 30
  * basis points cover the SDEX moving while a leg lands: it moved more than
- * that within a minute 1.3% of the time.
+ * that within a minute 1.8% of the time.
  */
 export const DEFAULTS = {
   minProfitXlm: 0.02,
@@ -563,23 +563,34 @@ function txResult(b64: string | undefined): StellarSdk.xdr.TransactionResult | u
  * failed, it was refused, or its validity ran out with the ledger past it, so
  * it can never be included. A send that errors is followed too (it may have
  * gone through). UNKNOWN only when the RPC never answers.
+ *
+ * "Try again later" and a refused sequence number are sent again a few times:
+ * the RPC is several nodes, and one that is a ledger behind doesn't know yet
+ * that the run's previous transaction has landed.
  */
 async function submit(net: Net, tx: StellarSdk.Transaction): Promise<Sent> {
   const hash = tx.hash().toString("hex");
   const validUntil = Number(tx.timeBounds?.maxTime ?? 0);
   let sendError: string | undefined;
+  let refused = "tryAgainLater";
   let accepted = false;
   for (let attempt = 0; attempt < SEND_ATTEMPTS && !accepted && !sendError; attempt++) {
+    if (attempt > 0) await net.io.sleep(POLL_MS);
     try {
       const sent = await rpcCall<{ status: string; errorResultXdr?: string }>(net, "sendTransaction", { transaction: tx.toXDR() });
-      if (sent.status === "ERROR") return { hash, status: "REJECTED", code: resultCode(txResult(sent.errorResultXdr)) };
-      if (sent.status === "TRY_AGAIN_LATER") await net.io.sleep(POLL_MS);
-      else accepted = true;
+      if (sent.status === "ERROR") {
+        refused = resultCode(txResult(sent.errorResultXdr));
+        if (refused !== "txBadSeq") return { hash, status: "REJECTED", code: refused };
+      } else if (sent.status === "TRY_AGAIN_LATER") {
+        refused = "tryAgainLater";
+      } else {
+        accepted = true;
+      }
     } catch (err) {
       sendError = messageOf(err);
     }
   }
-  if (!accepted && !sendError) return { hash, status: "REJECTED", code: "tryAgainLater" };
+  if (!accepted && !sendError) return { hash, status: "REJECTED", code: refused };
   for (;;) {
     await net.io.sleep(POLL_MS);
     let res: { status: string; resultXdr?: string; resultMetaXdr?: string; latestLedgerCloseTime?: string | number } | null = null;
@@ -788,7 +799,14 @@ export async function runOnce(cfg: ArbConfig): Promise<ArbReport> {
       report.reason = `the vault leg ${outcome(leg2)}; the buy-back stands as a plain SDEX conversion and the inventory rebalances later`;
       return report;
     }
-    const paid = leg2.returnValue ? BigInt(StellarSdk.scValToNative(leg2.returnValue) as bigint) : prepared.simulatedOut;
+    // The swap returns what it paid. If that can't be read, the simulation's figure stands: the leg
+    // succeeded, so it paid at least hedgeIn either way.
+    let paid = prepared.simulatedOut;
+    try {
+      if (leg2.returnValue) paid = BigInt(StellarSdk.scValToNative(leg2.returnValue) as bigint);
+    } catch {
+      paid = prepared.simulatedOut;
+    }
     report.vaultLeg.received = fmt(paid);
     const fees = leg1.feeXlm && leg2.feeXlm ? toNum(raw(leg1.feeXlm) + raw(leg2.feeXlm)) : feeXlm;
     report.action = "trade";
@@ -796,7 +814,9 @@ export async function runOnce(cfg: ArbConfig): Promise<ArbReport> {
     report.profitXlm = Number((toNum(boughtBack - plan.amountIn) * xlmPerSold + toNum(paid - plan.hedgeIn) * xlmPerBought - fees).toFixed(7));
     return report;
   } catch (err) {
-    report.action = "error";
+    // Anything unexpected after the buy-back landed still leaves the account one leg in.
+    const oneLegIn = report.plan !== undefined && report.hedgeLeg?.status === "SUCCESS" && report.vaultLeg?.status !== "SUCCESS";
+    report.action = oneLegIn ? "trade-incomplete" : "error";
     report.error = messageOf(err);
     return report;
   }
