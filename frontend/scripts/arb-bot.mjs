@@ -14,12 +14,14 @@
 //   --address G…        account to plan for (defaults to the key's account)
 //   --live              sign and send (needs ARB_BOT_SECRET)
 //   --every <seconds>   keep running at this interval (default: run once)
-//   --min-profit <xlm>  smallest profit worth a trade, after fees (default 0.05)
+//   --min-profit <xlm>  smallest profit worth a trade, after fees (default 0.02)
 //   --max-trade <xlm>   largest trade, in XLM or its USDC value (default 150)
 // Environment: ARB_BOT_SECRET, RPC_URL, HORIZON_URL.
 //
-// The account needs XLM and a USDC trustline with some USDC: it sells
-// whichever side the vault overpays for and buys it back on the SDEX.
+// The account needs XLM. A live run adds the USDC trustline if it is missing
+// and converts half the XLM to USDC on the SDEX, since a round trip uses
+// both: it buys back on the SDEX the asset the vault overpays for, then
+// sells it into the vault.
 
 import { Keypair } from "@stellar/stellar-sdk";
 import { DEFAULTS, runOnce } from "../functions/_lib/arb.ts";
@@ -61,7 +63,6 @@ const config = {
   minProfitBps: DEFAULTS.minProfitBps,
   maxTradeXlm: Number(option("max-trade") ?? DEFAULTS.maxTradeXlm),
   feeBufferXlm: DEFAULTS.feeBufferXlm,
-  slippageBps: DEFAULTS.slippageBps,
 };
 
 const every = Number(option("every") ?? 0);

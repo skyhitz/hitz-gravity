@@ -163,12 +163,21 @@ snapshot. `/mcp` is listed in `run_worker_first` next to `/api/*`.
 ### Arbitrage bot
 
 Skyhitz's own vault/SDEX arbitrage runs in the Worker on a second cron
-(`2-59/5 * * * *`): `functions/_lib/arb.ts` is the strategy,
-`functions/_lib/arb-worker.ts` the cron glue (D1 log in `arb_runs`, guards,
-alerts), and `scripts/arb-bot.mjs` runs the same strategy from Node for anyone.
+(`2-59/5 * * * *`): `functions/_lib/arb.ts` is the strategy and its two legs
+(the SDEX buy-back first, then the vault swap), `functions/_lib/arb-ops.ts`
+the cron run around it (D1 log in `arb_runs`, guards, alerts, status),
+`functions/_lib/arb-worker.ts` the Worker's bindings, and
+`scripts/arb-bot.mjs` runs the same strategy from Node for anyone.
 `ARB_BOT_MODE` (`off` / `dry-run` / `live`) and `ARB_BOT_ADDRESS` are vars;
-the key is a secret (`npx wrangler secret put ARB_BOT_SECRET`). Strategy,
-limits and guards: [`ARB_BOT.md`](./ARB_BOT.md).
+the key is a secret (`npx wrangler secret put ARB_BOT_SECRET`);
+`ARB_BOT_MIN_PROFIT_XLM` and `ARB_BOT_MAX_TRADE_XLM` are optional overrides.
+
+Before changing the bot's live path, run `pnpm test` (it trades against a
+simulated network in `tests/arb.test.mjs` and `tests/arb-ops.test.mjs`) and
+`node --experimental-strip-types scripts/arb-testnet-rehearsal.mjs` (it trades
+for real on testnet). `scripts/arb-replay.mjs` replays the planner on past
+SDEX prices. Strategy, numbers, limits and guards:
+[`ARB_BOT.md`](./ARB_BOT.md).
 
 ## Gateway guards
 
