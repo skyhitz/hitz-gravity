@@ -9,6 +9,11 @@
 #
 #   • HITZ event ingestion — the `hitz-rpc` cursor in /api/data/status
 #   • HITZ/USD price feed  — `asOf` in /api/price/history
+#
+# The arbitrage bot runs on the same Worker's second cron. When it is switched
+# on (dry-run or live), its last run in /api/v1/bot must be recent too: the
+# bot emails the operator when it pauses itself, but it can't say that its
+# cron stopped firing.
 
 name: Daily Data Health Check
 
@@ -45,11 +50,16 @@ jobs:
           };
           const status = await get("/api/data/status");
           const price = await get("/api/price/history");
+          const bot = await get("/api/v1/bot");
           const rpc = status.cursors.find((c) => c.source === "hitz-rpc");
           const checks = [
             ["HITZ event ingestion", rpc?.updated_at],
             ["HITZ/USD price feed", price.asOf],
           ];
+          // A paused bot runs nothing until its pause ends, and has already emailed why.
+          if (bot.mode === "off") console.log("arbitrage bot: off");
+          else if (bot.paused) console.log(`::warning::arbitrage bot is paused: ${bot.paused}`);
+          else checks.push([`Arbitrage bot (${bot.mode})`, bot.last_run?.at]);
           console.log("latest event:", JSON.stringify(status.latestEvent));
           console.log("row counts:", JSON.stringify(status.counts));
           let ok = true;
