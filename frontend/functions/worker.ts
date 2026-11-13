@@ -22,6 +22,7 @@ import { GET_CONTRACT_INFO, GET_EVENTS, GET_STATUS, GET_TX_INFO } from "./api/da
 import { GET_LIQUIDITY, GET_PRICE_HISTORY, GET_TRACTION } from "./api/snapshots";
 import * as v1 from "./api/v1";
 import * as mcp from "./api/mcp";
+import * as terminal from "./api/terminal";
 import { runIngest } from "./_lib/ingest";
 import { runArbBot } from "./_lib/arb-worker";
 import { runAdminJob, watchSponsor } from "./_lib/sponsor-ops";
@@ -89,6 +90,9 @@ export default {
       return env.ASSETS.fetch(request);
     }
 
+    // The HITZ Terminal has its own router (api/terminal.ts, _lib/terminal/routes.ts).
+    if (url.pathname.startsWith("/api/terminal/")) return terminal.handle(request, env, ctx);
+
     const handler = ROUTES[`${request.method} ${url.pathname}`];
     // The public API answers browsers from any origin: preflights and 404s carry CORS.
     if (url.pathname === "/api/v1" || url.pathname.startsWith("/api/v1/")) {
@@ -120,6 +124,10 @@ export default {
       ctx.waitUntil(logged("[job]", runAdminJob(env)).then(() => logged("[arb]", runArbBot(env))));
       return;
     }
-    ctx.waitUntil(logged("[ingest]", runIngest(env)).then(() => logged("[sponsor]", watchSponsor(env))));
+    ctx.waitUntil(
+      logged("[ingest]", runIngest(env))
+        .then(() => logged("[sponsor]", watchSponsor(env)))
+        .then(() => logged("[terminal]", terminal.runTerminalJobs(env)))
+    );
   },
 };
