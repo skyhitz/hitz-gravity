@@ -17,8 +17,10 @@ else to the file on GitHub.
 - Edit the source files, never `content/`. It is generated and git-ignored.
 - Pages with no source in the repo live in `extra/` and are copied as they
   are (today only the note on the archived v1 platform).
-- `sidebars.ts` sets the order. To publish another file, add it to `PAGES`
-  and to the sidebar.
+- `sidebars.ts` sets the order. To publish another file, add it to `PAGES`,
+  to the sidebar and to the `paths` of
+  [`deploy-docs.yml`](../.github/workflows/deploy-docs.yml); the sync refuses
+  to build until it's there, so a new page can't silently stop deploying.
 - The build fails on a link to a missing file, a broken page link or a
   broken anchor, so a rename in the repo can't silently break the site.
 - Routes of the archived v1 docs redirect to `/history/skyhitz-v1`
@@ -37,6 +39,16 @@ npm run serve       # serve build/
 
 The site is the Cloudflare Pages project `skyhitz-docs` (direct upload),
 with the custom domain docs.skyhitz.io.
+
+It deploys itself: every push to `main` that changes `docs/` or a published
+file runs [`deploy-docs.yml`](../.github/workflows/deploy-docs.yml), which
+builds the site and deploys it to the production branch. The workflow can
+also be run by hand from the Actions tab. It reads `CLOUDFLARE_API_TOKEN` and
+`CLOUDFLARE_ACCOUNT_ID` from the repository's `Cloudflare` environment, the
+same as the frontend's deploy; the token needs Account, Cloudflare Pages,
+Edit.
+
+From a machine instead:
 
 ```bash
 npm run deploy      # build, then wrangler pages deploy build --branch main

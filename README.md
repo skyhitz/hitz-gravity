@@ -150,6 +150,7 @@ reports/                      Monthly on-chain activity reports
 .github/workflows/release.yml Reproducible token build → GitHub Release → Stellar Expert validation
 .github/workflows/release-sovereign-vault.yml  The same for the vault
 .github/workflows/deploy-frontend.yml  Deploys skyhitz.io on every push to main that touches frontend/
+.github/workflows/deploy-docs.yml  Deploys docs.skyhitz.io on every push to main that changes what it's built from
 .github/workflows/data-health.yml  Daily check that ingestion, prices and the bot are running
 deploy.sh                     Initial mainnet deploy script (kept for history)
 AUDIT.md                      Security review of the vault and token v2, production checklist
@@ -228,7 +229,9 @@ the validation handshake works.
 
 The site deploys itself: every push to `main` that touches `frontend/` runs
 [`deploy-frontend.yml`](./.github/workflows/deploy-frontend.yml), which tests,
-builds, applies pending D1 migrations and deploys the Worker.
+builds, applies pending D1 migrations and deploys the Worker. The docs do too:
+every push to `main` that changes `docs/` or a markdown file docs.skyhitz.io
+publishes runs [`deploy-docs.yml`](./.github/workflows/deploy-docs.yml).
 
 ## Frontend
 

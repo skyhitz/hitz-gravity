@@ -10,5 +10,5 @@ The repo map is `README.md`. The frontend has its own notes in `frontend/AGENTS.
    feeds docs.skyhitz.io changed (the build fails on broken links and anchors).
 3. When the job is done, open a pull request into main, every time. Never push to main directly.
 4. Merging into main deploys skyhitz.io whenever `frontend/` changed
-   (`.github/workflows/deploy-frontend.yml`). docs.skyhitz.io deploys by hand
-   (`npm run deploy` in `docs/`).
+   (`.github/workflows/deploy-frontend.yml`), and docs.skyhitz.io whenever `docs/` or a markdown
+   file it publishes changed (`.github/workflows/deploy-docs.yml`).
