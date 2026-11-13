@@ -127,7 +127,8 @@ function PlanCard({ plan, me, yearly, onPaid }: { plan: PublicPlan; me: Me | nul
   );
 }
 
-export function Pricing({ plans, me, onPaid }: { plans: PublicPlan[]; me: Me | null; onPaid: () => void }) {
+/** `plans` is null while loading and empty when the API couldn't be reached. */
+export function Pricing({ plans, me, onPaid }: { plans: PublicPlan[] | null; me: Me | null; onPaid: () => void }) {
   const [yearly, setYearly] = useState(false);
   return (
     <section id="pricing" className="space-y-4 scroll-mt-16">
@@ -149,11 +150,17 @@ export function Pricing({ plans, me, onPaid }: { plans: PublicPlan[]; me: Me | n
           </button>
         </div>
       </div>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {plans.map((p) => (
-          <PlanCard key={p.id} plan={p} me={me} yearly={yearly} onPaid={onPaid} />
-        ))}
-      </div>
+      {plans && plans.length === 0 ? (
+        <p className="bg-card border border-border rounded-lg px-4 py-6 text-sm text-muted text-center">
+          Plans can&apos;t be loaded right now. Refresh in a minute to see them.
+        </p>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {(plans ?? []).map((p) => (
+            <PlanCard key={p.id} plan={p} me={me} yearly={yearly} onPaid={onPaid} />
+          ))}
+        </div>
+      )}
     </section>
   );
 }

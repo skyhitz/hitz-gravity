@@ -18,7 +18,7 @@ export default function SignPage() {
       <nav className="sticky top-0 z-10 border-b border-border bg-background/80 backdrop-blur-md">
         <div className="max-w-xl mx-auto px-6 h-12 flex items-center justify-between">
           <Link href="/" className="text-muted text-sm hover:text-foreground transition-colors">
-            ← Mainnet
+            ← Home
           </Link>
           <Link href="/integrate/" className="text-xs text-muted hover:text-foreground transition-colors">
             Integrate

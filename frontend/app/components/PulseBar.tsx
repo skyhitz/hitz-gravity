@@ -74,7 +74,7 @@ export default function PulseBar() {
             <span className="pulse-symbol">HITZ</span>
           </div>
         </div>
-        <div className="pulse-cell">
+        <div className="pulse-cell balance">
           <div className="pulse-label">
             <span style={{ color: vaulted ? "var(--red)": "var(--green)"}} className="mono">
               B
@@ -85,7 +85,7 @@ export default function PulseBar() {
             {fmtFixed(balance, 2)}
             <span className="pulse-symbol">HITZ</span>
             {publicKey && (
-              <span onClick={handleAddHitzToWallet} className="pulse-symbol cursor-pointer" style={{ color: "var(--accent)" }}>(Add Asset)</span>
+              <span onClick={handleAddHitzToWallet} className="pulse-symbol cursor-pointer whitespace-nowrap" style={{ color: "var(--accent)" }}>(Add Asset)</span>
             )}
           </div>
         </div>

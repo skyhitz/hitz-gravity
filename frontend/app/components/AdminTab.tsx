@@ -102,7 +102,7 @@ export default function AdminTab() {
       <div className="admin-header">
         <span className="icon">⚠</span>
         <div className="txt">
-          <strong>Advanced tools.</strong> These exercise the protocol&apos;s
+          <strong>Advanced tools.</strong>{" "}These exercise the protocol&apos;s
           edge cases and the admin&apos;s powers. Some deliberately cross the
           Event Horizon, add liquidity that can never be withdrawn, or write
           to admin-only storage. Read each description before executing.

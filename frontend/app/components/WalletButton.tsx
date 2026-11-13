@@ -78,22 +78,22 @@ export default function WalletButton() {
   if (publicKey) {
     return (
       <>
-        <div className="relative" ref={menuRef}>
+        <div className="relative min-w-0" ref={menuRef}>
           <button
             onClick={() => setOpen((v) => !v)}
-            className="flex items-center gap-2 bg-card border border-border hover:border-accent/50 rounded-full px-4 py-2 text-sm transition-all duration-150 cursor-pointer group"
+            className="flex items-center gap-2 min-w-0 max-w-full bg-card border border-border hover:border-accent/50 rounded-full px-3 sm:px-4 py-2 text-sm transition-all duration-150 cursor-pointer group"
             aria-haspopup="true"
             aria-expanded={open}
           >
-            <span className="relative flex h-2 w-2">
+            <span className="relative flex h-2 w-2 shrink-0">
               <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${modeColor} opacity-60`} />
               <span className={`relative inline-flex rounded-full h-2 w-2 ${modeColor}`} />
             </span>
-            <span className={connectionType === "email" ? "text-foreground tracking-tight" : "font-mono text-foreground tracking-tight"}>
+            <span className={`truncate ${connectionType === "email" ? "text-foreground tracking-tight" : "font-mono text-foreground tracking-tight"}`}>
               {label}
             </span>
             <svg
-              className={`w-3 h-3 text-muted transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+              className={`w-3 h-3 shrink-0 text-muted transition-transform duration-200 ${open ? "rotate-180" : ""}`}
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -171,7 +171,7 @@ export default function WalletButton() {
       <button
         onClick={() => setModalOpen(true)}
         disabled={connecting}
-        className="bg-accent hover:bg-accent-hover disabled:opacity-60 text-white font-medium rounded-full px-5 py-2 text-sm transition-colors cursor-pointer disabled:cursor-not-allowed"
+        className="shrink-0 whitespace-nowrap bg-accent hover:bg-accent-hover disabled:opacity-60 text-white font-medium rounded-full px-4 sm:px-5 py-2 text-sm transition-colors cursor-pointer disabled:cursor-not-allowed"
       >
         {connecting ? (
           <span className="flex items-center gap-2">

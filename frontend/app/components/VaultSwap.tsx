@@ -297,8 +297,13 @@ export default function VaultSwap() {
     return () => setExpectedOut(0n);
   }, [buying, amountOut, setExpectedOut]);
 
-  const heroState: "safe" | "warn" | "horizon" = willVault ? "horizon" : pressurePct > 75 ? "warn" : "safe";
-  const heroLabel = willVault ? "Crossing Horizon" : heroState === "warn" ? "Near Event Horizon" : "Safe Orbit";
+  // A vaulted account is already past the Event Horizon: the card says so, and
+  // a purchase crosses nothing (it only adds to what must be sold to release).
+  const crossing = willVault && vaulted !== true;
+  const heroState: "safe" | "warn" | "horizon" | "vaulted" =
+    vaulted === true ? "vaulted" : crossing ? "horizon" : pressurePct > 75 ? "warn" : "safe";
+  const heroLabel =
+    vaulted === true ? "Vaulted" : crossing ? "Crossing Horizon" : heroState === "warn" ? "Near Event Horizon" : "Safe Orbit";
 
   // ─── Execute ──────────────────────────────────────────────────────────────
   const handleSwap = useCallback(async () => {
@@ -334,7 +339,7 @@ export default function VaultSwap() {
     if (missingTrustline) return "Add the trustline first";
     if (!quote) return "No quote";
     if (confirmedOut === null) return confirmed?.error ? "Quote failed" : "Confirming quote…";
-    if (willVault) return "CROSS EVENT HORIZON";
+    if (crossing) return "CROSS EVENT HORIZON";
     return `Swap · min ${formatStroops(minOut ?? 0n, outInfo.decimals)} ${outInfo.symbol}`;
   })();
 
@@ -357,7 +362,7 @@ export default function VaultSwap() {
           <div className="alert info" style={{ marginBottom: 14 }}>
             <span className="icon">⬡</span>
             <div>
-              <strong>Your account is vaulted.</strong> You can still sell HITZ into the vault: it&apos;s a registered pool. Selling enough to bring
+              <strong>Your account is vaulted.</strong>{" "}You can still sell HITZ into the vault: it&apos;s a registered pool. Selling enough to bring
               your balance under the Event Horizon releases you; the Vault tab computes the amount.
             </div>
           </div>
@@ -398,7 +403,7 @@ export default function VaultSwap() {
             setTyped(v);
             setDirection("exact-out");
           }}
-          danger={willVault}
+          danger={crossing}
         />
 
         {derived.error && (
@@ -480,7 +485,7 @@ export default function VaultSwap() {
           </div>
         )}
 
-        {willVault && (
+        {crossing && (
           <div className="alert danger" style={{ marginTop: 14 }}>
             <span className="icon">⚠</span>
             <div>
@@ -501,7 +506,7 @@ export default function VaultSwap() {
         )}
 
         <div style={{ marginTop: 16 }}>
-          <button onClick={handleSwap} disabled={ctaDisabled} className={`btn ${willVault ? "danger" : "primary"}`}>
+          <button onClick={handleSwap} disabled={ctaDisabled} className={`btn ${crossing ? "danger" : "primary"}`}>
             {ctaLabel}
           </button>
         </div>

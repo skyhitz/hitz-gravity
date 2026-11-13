@@ -61,13 +61,13 @@ export default function AccountInspector() {
   return (
     <div className="space-y-3">
       {/* Input row */}
-      <div className="flex gap-2">
+      <div className="inspect-row">
         <input
           value={address}
           onChange={(e) => setAddress(e.target.value)}
           placeholder="Stellar address (G… or C…)"
           onKeyDown={(e) => e.key === "Enter" && inspect()}
-          className="flex-1"
+          className="inp flex-1 min-w-0"
         />
         <button
           onClick={inspect}

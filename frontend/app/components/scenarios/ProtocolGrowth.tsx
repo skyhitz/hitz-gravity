@@ -79,7 +79,7 @@ export default function ProtocolGrowth({ publicKey }: Props) {
     <div className="space-y-6">
       <p className="text-muted text-sm leading-relaxed">
         Admin registers pool and router addresses. <strong>Pools</strong> hold Total Mass, and vaulted
-        accounts can still send them HITZ (selling into the vault is one). <strong>Routers</strong> are
+        accounts can still send them HITZ (selling into the vault is one). <strong>Routers</strong>{" "}are
         pass-through infrastructure: never mass, and vaulted accounts can&apos;t send to them. A registration
         binds the address&apos;s current Wasm: if its code changes, the token stops trusting it until it&apos;s
         re-registered. Never re-register the retired Aquarius pools (CCCDPF74…, CBMOEJUO…).

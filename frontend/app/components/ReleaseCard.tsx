@@ -165,7 +165,7 @@ export default function ReleaseCard() {
             <p className="vault-subtitle" style={{ margin: "0 auto" }}>
               {balance !== null ? (
                 <>
-                  You hold {fmtFixed(balance, 2)} HITZ, {fmtFixed(overHorizon, 2)} over the Event Horizon. You can still sell HITZ into the
+                  You hold {fmtFixed(balance, 2)} HITZ, {fmtFixed(overHorizon, 2)}{" "}over the Event Horizon. You can still sell HITZ into the
                   Sovereign Vault: it&apos;s a registered pool, so the sale grows Total Mass and raises L. Once your balance is at or under L,
                   you&apos;re free.
                 </>

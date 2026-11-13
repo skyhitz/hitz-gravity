@@ -59,8 +59,11 @@ body {
 input, select, button { font-family: inherit; }
 input { color: var(--foreground); }
 
-/* Base .inp utility (used by vault + admin forms) */
-.inp {
+/* Base .inp utility (used by vault + admin forms). The admin tool cards'
+   bare text inputs get the same field look. */
+.inp,
+.tool-body input:not([type]),
+.tool-body input[type="text"] {
   background: var(--bg-2);
   border: 1px solid var(--border);
   color: var(--foreground);
@@ -71,8 +74,8 @@ input { color: var(--foreground); }
   outline: none;
   transition: border-color 0.15s;
 }
-.inp:focus { border-color: var(--accent); }
-.inp::placeholder { color: var(--muted); opacity: 0.6; }
+.inp:focus, .tool-body input:focus { border-color: var(--accent); }
+.inp::placeholder, .tool-body input::placeholder { color: var(--muted); opacity: 0.6; }
 
 /* Tailwind input reset keeps working — the old generic `input { … }` block
    is gone so consumers opt in via class `.inp` or via component-level classes. */
@@ -131,7 +134,7 @@ input { color: var(--foreground); }
   max-width: 720px; margin: 0 auto; padding: 0 20px;
   height: 56px; display: flex; align-items: center; justify-content: space-between; gap: 16px;
 }
-.logo { display: flex; align-items: center; gap: 10px; }
+.logo { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .logo-mark {
   width: 22px; height: 22px; border-radius: 50%;
   background: radial-gradient(circle at 30% 30%, #2a2a2c, #000);
@@ -143,8 +146,10 @@ input { color: var(--foreground); }
   border: 1px dashed var(--border); border-radius: 50%;
 }
 .logo h1 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
-.nav-right { display: flex; align-items: center; gap: 16px; }
-.nav-link { color: var(--muted); font-size: 13px; text-decoration: none; transition: color 0.15s; }
+/* min-width: 0 lets the wallet pill truncate instead of pushing the page
+   wider than a phone screen. */
+.nav-right { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.nav-link { color: var(--muted); font-size: 13px; text-decoration: none; transition: color 0.15s; white-space: nowrap; }
 .nav-link:hover { color: var(--foreground); }
 @media (max-width: 560px) { .nav-link.wide-only { display: none; } }
 
@@ -189,6 +194,9 @@ input { color: var(--foreground); }
 
 @media (max-width: 560px) {
   .pulse-inner { grid-template-columns: 1fr 1fr; }
+  /* Alone on its row anyway; the full width keeps a long balance and
+     "(Add Asset)" on one line. */
+  .pulse-cell.balance { grid-column: 1 / -1; }
 }
 
 /* ─── Main container ─────────────────────────────────────────────────────── */
@@ -212,12 +220,14 @@ input { color: var(--foreground); }
 .hero.horizon { border-color: rgba(255,69,58,0.5); animation: horizon-glow 3s ease-in-out infinite; }
 .hero.vaulted { border-color: rgba(191,90,242,0.4); background: linear-gradient(180deg, var(--card), #120f18); }
 
+/* Wraps on narrow phones: the title drops below the status as a whole
+   instead of each side breaking mid-phrase. */
 .hero-header {
-  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  display: flex; align-items: center; justify-content: space-between; gap: 6px 16px; flex-wrap: wrap;
   padding: 14px 18px;
   border-bottom: 1px solid var(--border-soft);
 }
-.hero-status { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
+.hero-status { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); white-space: nowrap; }
 .hero-status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
 .hero.warn    .hero-status-dot { background: var(--orange); }
 .hero.horizon .hero-status-dot { background: var(--red); animation: pulse-dot 1s ease-in-out infinite; }
@@ -228,7 +238,7 @@ input { color: var(--foreground); }
 .hero.horizon .hero-status-label { color: var(--red); }
 .hero.vaulted .hero-status-label { color: var(--purple); }
 
-.hero-title { font-size: 13px; color: var(--foreground); font-weight: 500; }
+.hero-title { font-size: 13px; color: var(--foreground); font-weight: 500; white-space: nowrap; }
 .hero-body  { padding: 20px 18px; }
 
 /* ─── Token field ────────────────────────────────────────────────────────── */
@@ -492,10 +502,19 @@ input { color: var(--foreground); }
 
 .footer { border-top: 1px solid var(--border); margin-top: auto; }
 .footer-inner { max-width: 720px; margin: 0 auto; padding: 18px 20px; display: flex; justify-content: space-between; align-items: center; gap: 16px; }
-.footer .contract { font-family: var(--font-geist-mono), Menlo, monospace; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.footer .contract { font-family: var(--font-geist-mono), Menlo, monospace; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.footer .contract .network { font-family: var(--font-geist-sans), ui-sans-serif, sans-serif; }
+.footer .contract .sep { color: var(--muted-soft); margin: 0 6px; }
 .footer-links { display: flex; gap: 14px; flex-shrink: 0; }
-.footer-links a { color: var(--muted); font-size: 11px; text-decoration: none; }
+.footer-links a { color: var(--muted); font-size: 11px; text-decoration: none; white-space: nowrap; }
 .footer-links a:hover { color: var(--foreground); }
+/* Phones: links wrap onto rows above the network + contract line, with
+   enough height to tap. */
+@media (max-width: 560px) {
+  .footer-inner { flex-direction: column-reverse; align-items: stretch; gap: 14px; padding: 20px 20px 28px; }
+  .footer-links { flex-wrap: wrap; gap: 2px 18px; }
+  .footer-links a { font-size: 12px; padding: 5px 0; }
+}
 
 /* ─── Side card (account pulse, inspector wrapper) ──────────────────────── */
 
@@ -644,13 +663,13 @@ input { color: var(--foreground); }
 
 /* Card chrome */
 .eco-card { border: 1px solid var(--border); border-radius: 18px; background: var(--card); overflow: hidden; }
-.eco-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 20px 14px; }
-.eco-head .ttl-wrap { display: flex; align-items: center; gap: 10px; }
+.eco-head { display: flex; align-items: center; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; padding: 16px 20px 14px; }
+.eco-head .ttl-wrap { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
 .eco-head .dot { width: 7px; height: 7px; border-radius: 50%; }
 .eco-head h4 { margin: 0; font-size: 13px; font-weight: 500; color: var(--foreground); }
 .eco-head .count { font-family: var(--font-geist-mono), Menlo, monospace; font-size: 10px; color: var(--green); background: rgba(48,209,88,.1); padding: 2px 8px; border-radius: 999px; text-transform: uppercase; letter-spacing: .1em; }
 .eco-head .count.idle { color: var(--muted); background: var(--bg-2); }
-.eco-expand { font-size: 11px; color: var(--muted); text-decoration: none; }
+.eco-expand { font-size: 11px; color: var(--muted); text-decoration: none; white-space: nowrap; }
 .eco-expand:hover { color: var(--foreground); }
 .eco-frame { height: 540px; border-top: 1px solid var(--border-soft); background: #07070a; }
 @media (max-width: 640px) { .eco-frame { height: 420px; } }
@@ -731,9 +750,11 @@ input { color: var(--foreground); }
 
 @container (max-width: 620px) {
   .eco-panel { left: 16px; right: 16px; width: auto; top: auto; bottom: 64px; max-height: calc(100% - 140px); }
+  /* Title above the stats: side by side they run past a phone-width stage. */
+  .eco-hd { flex-direction: column; gap: 8px; }
   .eco-hd .s { display: none; }
   .eco-hd .s.warn { display: block; }
-  .eco-stats { gap: 12px; }
+  .eco-stats { gap: 6px 14px; flex-wrap: wrap; }
   .eco-tk { display: none; }
   .eco-ctl .hint { display: none; }
 }

@@ -8,7 +8,7 @@
  */
 import { useEffect, useState, type ReactNode } from "react";
 import { TimeSeriesChart } from "../TimeSeriesChart";
-import { data, type Meta, type PlanId, type Result } from "../../lib/terminal";
+import { data, UNREACHABLE, type Meta, type PlanId, type Result } from "../../lib/terminal";
 import { day, frac, pct, price, short, stamp, timeUtc, tone, usd, xlm } from "./format";
 
 // ─── Polling ──────────────────────────────────────────────────────────────────
@@ -28,9 +28,11 @@ export function usePoll<T>(dataset: string, params: Record<string, string | numb
         const p = JSON.parse(key) as Record<string, string | number | undefined>;
         if (spanMs) p.from = Date.now() - spanMs;
         const r = await data<T>(dataset, p);
-        if (alive) setRes(r);
-      } catch {
-        // keep the last answer; try again on the next tick
+        // A failure on the server's side keeps the last good answer on screen; the next tick retries.
+        if (alive) setRes((prev) => (!r.ok && r.status >= 500 && prev?.ok ? prev : r));
+      } catch (e) {
+        // Unreachable: keep the last answer, or say why there's none yet. The next tick retries.
+        if (alive) setRes((prev) => prev ?? { ok: false, status: 0, code: "unreachable", error: e instanceof Error ? e.message : UNREACHABLE });
       }
       if (alive && document.visibilityState !== "hidden") timer = setTimeout(tick, everyMs);
       else if (alive) timer = setTimeout(tick, everyMs * 4);
@@ -50,8 +52,8 @@ const PLAN_NAME: Record<PlanId, string> = { free: "Free", trader: "Trader", pro:
 
 function DelayBadge({ meta }: { meta?: Meta }) {
   if (!meta) return null;
-  if (meta.delayed_by_minutes > 0) return <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange/15 text-orange font-mono">{meta.delayed_by_minutes}m DELAY</span>;
-  return <span className="text-[10px] px-1.5 py-0.5 rounded bg-green/15 text-green font-mono">LIVE</span>;
+  if (meta.delayed_by_minutes > 0) return <span className="shrink-0 whitespace-nowrap text-[10px] px-1.5 py-0.5 rounded bg-orange/15 text-orange font-mono">{meta.delayed_by_minutes}m DELAY</span>;
+  return <span className="shrink-0 whitespace-nowrap text-[10px] px-1.5 py-0.5 rounded bg-green/15 text-green font-mono">LIVE</span>;
 }
 
 export function Panel({ title, sub, meta, children, className = "" }: { title: string; sub?: string; meta?: Meta; children: ReactNode; className?: string }) {
