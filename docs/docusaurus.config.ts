@@ -7,8 +7,8 @@ const GITHUB = 'https://github.com/skyhitz/hitz-gravity'
 // scripts/sync.mjs before every start and build. Edit the source files, not
 // content/.
 const config: Config = {
-  title: 'Skyhitz Docs',
-  tagline: 'HITZ, the Gravity token, and the Sovereign Vault',
+  title: 'HITZ Protocol Docs',
+  tagline: 'Oracle-free, protocol-owned liquidity on Stellar',
   url: 'https://docs.skyhitz.io',
   baseUrl: '/',
   favicon: 'img/favicon.ico',
@@ -93,6 +93,7 @@ const config: Config = {
           title: 'More',
           items: [
             { label: 'App', href: 'https://skyhitz.io' },
+            { label: 'HITZ Terminal', href: 'https://skyhitz.io/terminal/' },
             { label: 'GitHub', href: GITHUB },
             { label: 'X', href: 'https://x.com/skyhitz' },
           ],

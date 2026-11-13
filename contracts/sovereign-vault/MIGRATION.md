@@ -4,7 +4,7 @@ Moves HITZ liquidity from the two Aquarius pools into the Sovereign Vault,
 installs the new token code, and ends with a final registry and a renounced
 admin.
 
-## Status: steps A to D done on Nov 3-4, 2026 (UTC)
+## Status: steps A to D done on Nov 3-4, 2026; liquidity completed on Nov 9 (UTC)
 
 | Step | Call | Ledger | Transaction |
 |---|---|---|---|
@@ -29,6 +29,15 @@ upgrade, S = 98,388,926.92 HITZ, L = 9,919.12 HITZ, `list_pools` is the admin
 wallet and the vault, `rate(XLM, USDC)` = 0.1596, `dislocation` 0 and a 1%
 fee on both pools. Stellar Expert verifies both contracts against commit
 `2807ed1`. Step E is still ahead.
+
+Since then (from the admin account's transactions):
+
+- Nov 8, 2026: `remove_router_address` for the four third-party routers
+  (`CBQDHNBF…`, `CA7RQDMM…`, `CB4YHF4E…`, `CAG5LRYQ…`). The gas sponsor is the
+  only router left.
+- Nov 9, 2026: `deposit` of the other 90%, 9,773.16 XLM and 1,146.00 USDC
+  with their HITZ, bringing the vault to about $5,800. The admin wallet keeps
+  its own 9.96M HITZ as the treasury, still a registered pool.
 
 ## Rehearsal
 
@@ -130,6 +139,11 @@ another).
 
 1. `remove_pool_address(GCAETBNB…)`: the admin wallet is no longer
    exempt from vaulting. Seed first so its HITZ is already in the vault.
+   The HITZ Terminal sends its payments to the treasury and takes them only
+   while the treasury is a registered pool
+   (`frontend/functions/_lib/terminal/chain.ts`). Before this step, point
+   `TERMINAL_TREASURY` at another registered pool that is a contract on its
+   approved code, or Terminal payments stop.
 2. `remove_router_address(GBER7ROB…)`: finish or move the reparation
    campaign first; afterwards the sponsor is an ordinary account (vaulted
    while it holds more than L).
@@ -152,9 +166,8 @@ another).
   Worker cron reads them from Stellar Expert into D1 (pool keys
   `<vault>:<asset>`), and the app's swap, release card and Monitor read the
   vault directly.
-- [ ] Deposit the rest of the withdrawn liquidity: at the soft-launch depth
-  a $20 trade pays the 10% cap (the Admin tab has a deposit tool; from the
-  admin wallet, HITZ moves pool to pool and S doesn't change).
+- [x] Deposit the rest of the withdrawn liquidity (Nov 9, 2026). At this
+  depth a $20 purchase still pays about 11% all in (AUDIT.md, V-1).
 - [ ] Monitor `integrity_drift_event` and `upgrade_proposed` on both
   contracts, `listing_proposed` on the vault, and silence (no HITZ events
   for 24 h).

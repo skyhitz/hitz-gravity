@@ -14,8 +14,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Skyhitz - Gravity. Mainnet",
-  description: "Invariant Gravity Model token",
+  title: "HITZ Protocol. Oracle-free, protocol-owned liquidity on Stellar",
+  description:
+    "HITZ Protocol on Stellar: the Sovereign Vault owns its liquidity and keeps part of every arbitrage profit in its pools, with no oracle and no outside LPs. The HITZ token caps what one account can hold and move freely.",
 };
 
 export default function RootLayout({

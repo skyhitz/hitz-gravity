@@ -1,29 +1,29 @@
-# Gravity HITZ: Legal Disclosure
+# HITZ Protocol: Legal Disclosure
 
-**Effective Date:** November 4, 2026 (first published April 2026)  
-**Protocol:** Gravity HITZ and the HITZ Sovereign Vault (together, the "Protocol")  
+**Effective Date:** November 13, 2026 (first published April 2026)  
+**Protocol:** HITZ Protocol: the HITZ token and the HITZ Sovereign Vault (together, the "Protocol")  
 **Jurisdiction:** Applicable laws of the user's country of residence
 
-> This document governs all interactions with the Gravity HITZ token contract and the HITZ Sovereign Vault contract deployed on the Stellar Network. By connecting a wallet or executing any transaction, you accept every term below in full.
+> This document governs all interactions with the HITZ token contract (on-chain name "Gravity HITZ") and the HITZ Sovereign Vault contract deployed on the Stellar Network. By connecting a wallet or executing any transaction, you accept every term below in full.
 
 ---
 
 ## I. The Gravity Law Acknowledgment
 
-The Gravity HITZ Protocol enforces a dynamic, mathematically-derived holding limit called the **Event Horizon**, denoted **L**, defined as:
+The HITZ token enforces a dynamic, mathematically-derived holding limit called the **Event Horizon**, denoted **L**, defined as:
 
 ```
 L = floor( sqrt( S × 10⁷ ) )
 ```
 
-where **S** (Total Mass) is the real-time sum of HITZ token balances held by admin-registered pools: the Sovereign Vault and the treasury account.
+where **S** (Total Mass) is the real-time sum of HITZ token balances held by admin-registered pools: the Sovereign Vault and the treasury account (the admin's own account).
 
 **The following consequences are intentional, designed behaviors, not bugs, errors, or malfunctions:**
 
 1. Any account whose HITZ balance exceeds **L** is **automatically and immediately Vaulted** by the smart contract. A Vaulted account can send HITZ only to a registered pool, such as by selling it into the Sovereign Vault; every other outbound transfer is blocked at the protocol level.
 2. L is dynamic. It rises as HITZ enters registered pools and falls as HITZ leaves them, including whenever anyone buys HITZ from the Sovereign Vault. An account that is free today may become Vaulted tomorrow if the ecosystem contracts.
 3. A purchase from the Sovereign Vault is judged against the L that the purchase itself leaves behind. Buying HITZ can Vault the buyer.
-4. Neither the Protocol developers nor any associated party can override, bypass, or reverse the Vaulting state of any account. The contract is the sole authority.
+4. No one can set or clear an account's Vaulted state directly: the contract decides it from the account's balance and L. While the token has an admin, however, the admin can change which addresses are registered pools and routers, with immediate effect (Section 4.6). A registered address is never Vaulted, and adding or removing a pool changes S and therefore L for every account.
 5. Ghost Vaulting, the passive Vaulting of accounts that never exceeded L at any single point but whose balance now exceeds a reduced L, is an expected emergent property of the model.
 
 The developers make no warranty that any specific balance will remain below L at any future time.
@@ -56,9 +56,10 @@ The Sovereign Vault is HITZ's own exchange: a smart contract holding one constan
 2. **Prices are the vault's own.** The vault's prices can differ from other markets, and they can move between the moment you see a quote and the moment your transaction executes. A quote is an estimate, not an offer; the minimum you accept (your slippage tolerance) is the only bound.
 3. **Deposits cannot be withdrawn.** Anyone may add liquidity at a pool's current ratio. Depositors receive no shares, no claim on the vault's assets, and no share of fees. Deposited assets leave the vault only as other people's swap outputs.
 4. **Liquidity can be thin.** The vault's depth determines its prices and fees. In a shallow pool even small trades can pay the maximum fee. Nothing guarantees any level of liquidity, or that you can sell at any price.
-5. **Listed assets carry their issuers' risk.** Each listed asset is controlled by its own issuer, who may be able to freeze, claw back or alter it. Such an action can stop or impair that asset's pool. HITZ itself is backed by every listed asset at once.
+5. **Listed assets carry their issuers' risk.** Each listed asset is controlled by its own issuer, who may be able to freeze, claw back or alter it. Such an action can stop or impair that asset's pool. HITZ's liquidity depends on every listed asset at once.
 6. **The vault has an administrator.** The admin seeds each listed asset's pool once, can list a new asset after a public 7-day timelock, and can upgrade the vault's code after a public 7-day timelock. The admin may give up upgrades (`renounce_upgrades`) or every power (`renounce`), irreversibly.
 7. **Skyhitz trades the vault too.** Skyhitz runs an arbitrage bot with its own funds, from a dedicated account published at [skyhitz.io/api/v1/bot](https://skyhitz.io/api/v1/bot) with every trade it makes. When the vault pays more for an asset than the Stellar DEX does, it buys that asset on the DEX and sells it into the vault. It pays the same fees and follows the same rules as everyone, and its code is public: it has no access to anything other traders don't, but it may take a price gap before you do.
+8. **HITZ Terminal payments are vault swaps.** A paid plan of the HITZ Terminal is paid in USDC or XLM through one vault swap that buys HITZ and sends it to the treasury. You receive access to the Terminal's data, not HITZ, and the vault keeps its fee as on any other trade. The swap is final once it lands on chain. Terminal data is for the subscriber's own use, may not be redistributed or resold, and is information only, not advice (Section VI).
 
 ---
 
@@ -82,7 +83,7 @@ The legal classification of digital tokens varies by jurisdiction. You are solel
 Loss of access to your private key means permanent, irrecoverable loss of your HITZ balance and any other assets in the account. The developers have no ability to recover accounts.
 
 **4.6 Upgrade and Admin Risk**  
-The token and the vault each have an admin. The token's admin can mint up to the fixed 100,000,000 HITZ cap, change which addresses count as pools and routers, and upgrade the token's code; the vault's admin holds the powers in Section III. Code upgrades of either contract, and new vault listings, take effect only after a public 7-day timelock enforced by the contracts. Beyond that, the developers make no binding commitment regarding future changes to contract logic, registered pools, or listed assets.
+The token and the vault each have an admin; today both roles, and the treasury, are held by the same account. The token's admin can mint up to the fixed 100,000,000 HITZ cap, change which addresses count as pools and routers, hand the admin role to another account, and upgrade the token's code; the vault's admin holds the powers in Section III. Code upgrades of either contract, and new vault listings, take effect only after a public 7-day timelock enforced by the contracts. Changes to the token's registered pools and routers, mints and admin handovers take effect immediately; removing a pool from the registry lowers L and can Vault accounts. Beyond that, the developers make no binding commitment regarding future changes to contract logic, registered pools, or listed assets.
 
 ---
 
@@ -103,7 +104,7 @@ If this waiver is found unenforceable for any reason, you agree that any dispute
 
 ## VI. No Financial Advice
 
-The **Event Horizon (L)** displayed in the Gravity HITZ interface, along with any other protocol metrics (Total Mass, vault status, safety indicators, prices, quotes, fees, liquidity, volume, and price impact), are **technical figures** derived from live on-chain data and from estimates.
+The **Event Horizon (L)** displayed in the HITZ Protocol interfaces (the app, the HITZ Terminal, the API and the MCP server), along with any other protocol metrics (Total Mass, vault status, safety indicators, prices, quotes, fees, liquidity, volume, and price impact) and the HITZ Terminal's market data, are **technical figures** derived from live on-chain data, market data and estimates.
 
 These values are not, and shall not be interpreted as:
 
@@ -118,7 +119,7 @@ The Protocol is provided "as is," without warranty of any kind, express or impli
 
 ## VII. Acknowledgment
 
-By connecting a wallet to the Gravity HITZ interface, you confirm that:
+By connecting a wallet to a HITZ Protocol interface, you confirm that:
 
 1. You have read and understood this entire disclosure.
 2. You are of legal age in your jurisdiction to enter into binding agreements.
@@ -129,4 +130,4 @@ By connecting a wallet to the Gravity HITZ interface, you confirm that:
 
 ---
 
-*Gravity HITZ is experimental software. The gravitational field does not negotiate.*
+*HITZ Protocol is experimental software.*

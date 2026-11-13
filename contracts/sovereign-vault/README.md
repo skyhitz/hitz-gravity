@@ -18,8 +18,9 @@ apps: [`INTEGRATION.md`](INTEGRATION.md).
 Any two listed assets trade through HITZ inside the vault. When one asset
 moves against another on other venues, the gap between their pools is
 arbitraged back through the vault, and the fee keeps that value in the
-reserves. HITZ is backed by every listed asset and compounds with their
-volatility.
+reserves. The vault is HITZ Protocol's protocol-owned liquidity: no LP
+shares, no withdrawals, no oracle, and reserves that compound with the
+volatility of every listed asset.
 
 Listing an asset changes no code: routing, the fee, the views and the events
 already handle any number of pools.
