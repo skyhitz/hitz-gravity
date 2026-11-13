@@ -35,6 +35,35 @@ const PAGES = [
 
 const bySource = new Map(PAGES.map((p) => [p.src, p]));
 
+/**
+ * The deploy workflow runs on pushes that change docs/ or a published file.
+ * Refuse to build while a published file is missing from its `paths`, so a new
+ * page can't silently stop deploying. Reads the `paths:` list under `push:`.
+ */
+function assertDeployWatches(pages) {
+  const workflow = join(REPO_ROOT, ".github", "workflows", "deploy-docs.yml");
+  if (!existsSync(workflow)) return;
+  const paths = [];
+  let inPaths = false;
+  for (const line of readFileSync(workflow, "utf8").split("\n")) {
+    if (/^\s*paths:\s*$/.test(line)) {
+      inPaths = true;
+      continue;
+    }
+    if (!inPaths) continue;
+    const item = line.match(/^\s*-\s*["']?([^"'\s#]+)["']?\s*(#.*)?$/);
+    if (item) paths.push(item[1]);
+    else if (line.trim() && !line.trim().startsWith("#")) inPaths = false;
+  }
+  const watched = (file) => paths.some((p) => p === file || (p.endsWith("/**") && file.startsWith(p.slice(0, -2))));
+  const missing = pages.map((p) => p.src).filter((src) => !watched(src));
+  if (missing.length) {
+    throw new Error(
+      `.github/workflows/deploy-docs.yml doesn't watch ${missing.join(", ")}: add ${missing.length === 1 ? "it" : "them"} to its paths, or changes won't redeploy docs.skyhitz.io`
+    );
+  }
+}
+
 /** Lines removed from a source: notes addressed to repo maintainers, not readers. */
 function dropMaintainerNotes(src, text) {
   if (src !== "WHITEPAPER.md") return text;
@@ -82,6 +111,8 @@ function frontMatter(p) {
     "",
   ].join("\n");
 }
+
+assertDeployWatches(PAGES);
 
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
