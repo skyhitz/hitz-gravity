@@ -219,21 +219,29 @@ interface LiqBin {
   markets: number;
 }
 
-function MirrorBars({ rows }: { rows: LiqBin[] }) {
+const BIN_MS: Record<string, number> = { "1m": 60_000, "5m": 300_000, "1h": 3_600_000, "1d": 86_400_000 };
+
+/**
+ * Longs up, shorts down, each bar at its own time across the window. Only bins with liquidations come
+ * back (Coinalyze stores no empty ones), so a gap in the chart is time without any.
+ */
+function MirrorBars({ rows, fromMs, toMs, binMs }: { rows: LiqBin[]; fromMs: number; toMs: number; binMs: number }) {
   const W = 600;
   const H = 140;
+  const span = Math.max(binMs, toMs - fromMs);
   const max = Math.max(1, ...rows.map((r) => Math.max(r.long_usd, r.short_usd)));
-  const w = W / Math.max(1, rows.length);
+  const w = Math.max(1, (binMs / span) * W);
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-[140px]" role="img" aria-label="Longs liquidated above the line, shorts below">
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-[140px]" role="img" aria-label="Longs liquidated above the line, shorts below, over time">
       <line x1={0} x2={W} y1={H / 2} y2={H / 2} stroke="var(--border)" strokeWidth={1} />
-      {rows.map((r, i) => {
+      {rows.map((r) => {
+        const x = ((r.t - fromMs) / span) * W;
         const lh = (r.long_usd / max) * (H / 2 - 4);
         const sh = (r.short_usd / max) * (H / 2 - 4);
         return (
           <g key={r.t}>
-            <rect x={i * w + 0.5} y={H / 2 - lh} width={Math.max(1, w - 1)} height={lh} fill="var(--red)" opacity={0.85} />
-            <rect x={i * w + 0.5} y={H / 2} width={Math.max(1, w - 1)} height={sh} fill="var(--green)" opacity={0.85} />
+            <rect x={x} y={H / 2 - lh} width={Math.max(1, w - 0.5)} height={lh} fill="var(--red)" opacity={0.85} />
+            <rect x={x} y={H / 2} width={Math.max(1, w - 0.5)} height={sh} fill="var(--green)" opacity={0.85} />
           </g>
         );
       })}
@@ -246,15 +254,18 @@ export function LiquidationsPanel({ version, fine }: { version: number; fine: bo
   return (
     <Panel title="Liquidations" sub="All 17 XLM perpetuals: longs above, shorts below" meta={res?.ok ? res.meta : undefined}>
       <Body res={res} what="Liquidations">
-        {(d) => {
+        {(d, m) => {
           const L = d.rows.reduce((s, r) => s + r.long_usd, 0);
           const S = d.rows.reduce((s, r) => s + r.short_usd, 0);
+          const toMs = Date.parse(m.to ?? m.as_of);
+          const fromMs = m.from ? Date.parse(m.from) : toMs - 86_400_000;
+          const hours = Math.round((toMs - fromMs) / 3_600_000);
           return (
             <div className="space-y-2">
-              <MirrorBars rows={d.rows} />
+              <MirrorBars rows={d.rows} fromMs={fromMs} toMs={toMs} binMs={BIN_MS[m.resolution ?? "1h"] ?? 3_600_000} />
               <div className="flex justify-between text-[11px] font-mono">
                 <span className="text-red">longs {usd(L)}</span>
-                <span className="text-muted">{d.rows.length} bins</span>
+                <span className="text-muted">{hours >= 48 ? `${Math.round(hours / 24)} days` : `${hours} hours`}, {m.resolution ?? "1h"} bins</span>
                 <span className="text-green">shorts {usd(S)}</span>
               </div>
             </div>
