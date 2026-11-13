@@ -19,8 +19,8 @@ const GITHUB = "https://github.com/skyhitz/hitz-gravity";
 
 /** Published files: repo path → docs page. Order is irrelevant; sidebars.ts sets it. */
 const PAGES = [
-  { src: "README.md", out: "index.md", slug: "/", title: "Overview", description: "HITZ, the Gravity token, and the Sovereign Vault on Stellar." },
-  { src: "WHITEPAPER.md", out: "whitepaper.md", slug: "/whitepaper", title: "Whitepaper", description: "The Invariant Gravity Model and the Sovereign Vault." },
+  { src: "README.md", out: "index.md", slug: "/", title: "Overview", description: "HITZ Protocol: oracle-free, protocol-owned liquidity on Stellar." },
+  { src: "WHITEPAPER.md", out: "whitepaper.md", slug: "/whitepaper", title: "Whitepaper", description: "How HITZ Protocol provides liquidity without mercenary LPs or oracles." },
   { src: "contracts/sovereign-vault/INTEGRATION.md", out: "vault/integration.md", slug: "/vault/integration", title: "Integrating the vault", description: "Calls, events and arbitrage for bots, wallets and apps." },
   { src: "contracts/sovereign-vault/MIGRATION.md", out: "vault/migration.md", slug: "/vault/migration", title: "Migration from Aquarius", description: "How HITZ moved from Aquarius pools to the Sovereign Vault." },
   { src: "frontend/ARB_BOT.md", out: "vault/arbitrage-bot.md", slug: "/vault/arbitrage-bot", title: "Arbitrage bot", description: "The bot Skyhitz runs between the vault and the Stellar DEX, and how to run your own." },

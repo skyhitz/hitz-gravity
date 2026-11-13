@@ -9,10 +9,10 @@ export function renderLegacyReparationEmail(claimLink: string) {
     "",
     "Combining decentralized money and music tech created too many moving parts. This complexity made it impossible to iterate fast or find a sustainable business model. The old model left our liquidity vulnerable to bad actors, and the burden of sustaining a streaming infrastructure became unsustainable without broader institutional support.",
     "",
-    "We are starting with a clean slate, fully aligned with the Stellar Development Foundation. Our new model, Gravity HITZ, is designed from first principles to protect the financial backbone of the project from the predatory \"pump and dump\" cycles that plague the industry.",
+    "We are starting with a clean slate on Stellar. Our new protocol, HITZ Protocol, provides liquidity without outside LPs or oracles: its Sovereign Vault owns its liquidity and keeps part of every arbitrage profit in its pools, and the HITZ token caps how much any single account can hold and move freely.",
     "",
     "Claim Your Legacy Balance",
-    "We have combined your legacy HITZ and XLM value into our new, more secure protocol.",
+    "We have converted your legacy balance into the new HITZ token (and XLM, where it applies), ready for you to claim.",
     "",
     "Claim Your New HITZ Balance Here",
     claimLink,
@@ -29,9 +29,9 @@ export function renderLegacyReparationEmail(claimLink: string) {
       <p style="margin:0 0 16px;color:#cfd2dc;">Hello,</p>
       <p style="margin:0 0 16px;color:#cfd2dc;">We are shifting our focus from music technology to Decentralized Finance (DeFi) infrastructure.</p>
       <p style="margin:0 0 16px;color:#cfd2dc;">Combining decentralized money and music tech created too many moving parts. This complexity made it impossible to iterate fast or find a sustainable business model. The old model left our liquidity vulnerable to bad actors, and the burden of sustaining a streaming infrastructure became unsustainable without broader institutional support.</p>
-      <p style="margin:0 0 16px;color:#cfd2dc;">We are starting with a clean slate, fully aligned with the Stellar Development Foundation. Our new model, Gravity HITZ, is designed from first principles to protect the financial backbone of the project from the predatory "pump and dump" cycles that plague the industry.</p>
+      <p style="margin:0 0 16px;color:#cfd2dc;">We are starting with a clean slate on Stellar. Our new protocol, HITZ Protocol, provides liquidity without outside LPs or oracles: its Sovereign Vault owns its liquidity and keeps part of every arbitrage profit in its pools, and the HITZ token caps how much any single account can hold and move freely.</p>
       <h2 style="margin:24px 0 10px;font-size:18px;color:#fff;">Claim Your Legacy Balance</h2>
-      <p style="margin:0 0 22px;color:#cfd2dc;">We have combined your legacy HITZ and XLM value into our new, more secure protocol.</p>
+      <p style="margin:0 0 22px;color:#cfd2dc;">We have converted your legacy balance into the new HITZ token (and XLM, where it applies), ready for you to claim.</p>
       <p style="margin:0 0 24px;">
         <a href="${escapeHtml(claimLink)}" style="${buttonStyle}">Claim Your New HITZ Balance Here</a>
       </p>

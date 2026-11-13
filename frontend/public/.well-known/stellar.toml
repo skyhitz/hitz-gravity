@@ -15,7 +15,7 @@ ACCOUNTS = [
 ORG_NAME = "Skyhitz"
 ORG_URL = "https://skyhitz.io"
 ORG_LOGO = "https://skyhitz.io/icon.png"
-ORG_DESCRIPTION = "Tokens that bound their own concentration. Gravity-mechanic primitives on Stellar."
+ORG_DESCRIPTION = "Skyhitz builds HITZ Protocol: oracle-free, protocol-owned liquidity on Stellar, and the HITZ Terminal for XLM market data."
 ORG_OFFICIAL_EMAIL = "support@skyhitz.io"
 ORG_TWITTER = "skyhitz"
 
@@ -24,20 +24,20 @@ ORG_TWITTER = "skyhitz"
 name = "Skyhitz Team"
 email = "support@skyhitz.io"
 
-# Asset: HITZ Token (Classic Stellar asset — legacy)
+# Asset: HITZ Token (Classic Stellar asset, legacy)
 [[CURRENCIES]]
 code = "HITZ"
 issuer = "GCAETBNBFKVGLYFXKCLMKT6ZVHFXHRSDFSEW7ODIUJYC6R7H2QJ6OKGU"
 display_decimals = 7
 name = "Skyhitz Token"
-desc = "Legacy Platform token for staking and rewards on Skyhitz."
-conditions = "HITZ is the native utility token of the Skyhitz platform."
+desc = "Legacy token of the archived Skyhitz v1 music platform. Replaced by the Soroban HITZ token below; legacy holders are offered the new HITZ and XLM through the reparation campaign."
+conditions = "Legacy asset. The Skyhitz v1 platform it served is archived."
 image = "https://skyhitz.io/icon.png"
 is_asset_anchored = false
 is_unlimited = false
 max_number = 21000000
 
-# Asset: HITZ Token (Soroban SEP-41 contract, Gravity)
+# Asset: HITZ Token (Soroban SEP-41 contract, HITZ Protocol)
 # Soroban-native HITZ implementing the SEP-41 token interface. It trades on
 # its own exchange, the HITZ Sovereign Vault
 # (CDEISYZM526FZJ4PDWNVKD7UHXFO4ATT46K47YTUQAOLWZQV64ANNBWU), on
@@ -47,8 +47,8 @@ code = "HITZ"
 contract = "CBAPZAZNNB4X3VPXV2LYA5RMV7XHXIVREES2GG7R5GUXDZ4R4CKOY4EU"
 display_decimals = 7
 name = "Gravity HITZ"
-desc = "Soroban-native HITZ token implementing the SEP-41 token interface. Any account holding more than the Event Horizon L = sqrt(S x 10^7) is vaulted and can only send HITZ to a registered pool. Trades on the HITZ Sovereign Vault (CDEISYZM526FZJ4PDWNVKD7UHXFO4ATT46K47YTUQAOLWZQV64ANNBWU) against XLM and USDC."
-conditions = "Native utility token of the Skyhitz Gravity platform. Holdings above the Event Horizon are vaulted. Vault trades pay a 1% to 10% fee. See https://skyhitz.io/whitepaper and https://github.com/skyhitz/hitz-gravity/blob/main/LEGAL.md."
+desc = "The token of HITZ Protocol, a Soroban SEP-41 contract. Any account holding more than the Event Horizon L = sqrt(S x 10^7), where S is the HITZ held by the protocol's registered pools, is vaulted and can only send HITZ to a registered pool. Trades on the HITZ Sovereign Vault (CDEISYZM526FZJ4PDWNVKD7UHXFO4ATT46K47YTUQAOLWZQV64ANNBWU), protocol-owned pools against XLM and USDC with no oracle."
+conditions = "Supply capped at 100,000,000 HITZ, fully minted. Holdings above the Event Horizon are vaulted. Vault trades pay a 1% to 10% fee. See https://skyhitz.io/whitepaper and https://github.com/skyhitz/hitz-gravity/blob/main/LEGAL.md."
 image = "https://skyhitz.io/icon.png"
 is_asset_anchored = false
 is_unlimited = false

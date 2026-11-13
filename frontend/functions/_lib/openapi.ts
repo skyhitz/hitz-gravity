@@ -35,8 +35,8 @@ export function openapi(env: Env) {
       title: "HITZ Sovereign Vault API",
       version: "1.0.0",
       description:
-        "Trade HITZ on Stellar mainnet through its own exchange, the Sovereign Vault " +
-        `(${VAULT_ID}): constant-product pools against XLM and USDC, with a fee of 1% per hop when calm, ` +
+        "Trade HITZ, the token of HITZ Protocol, on Stellar mainnet through its own exchange, the Sovereign Vault " +
+        `(${VAULT_ID}): protocol-owned constant-product pools against XLM and USDC, with no oracle, and a fee of 1% per hop when calm, ` +
         "rising to 10% while one asset is dislocated against another.\n\n" +
         "No API key. The API never holds keys: POST /swap returns an unsigned transaction for your own account, " +
         "you sign it with your wallet, and POST /submit relays it.\n\n" +

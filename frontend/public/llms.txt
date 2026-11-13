@@ -1,6 +1,6 @@
-# Skyhitz: HITZ and the Sovereign Vault
+# HITZ Protocol: the HITZ token and the Sovereign Vault
 
-> HITZ is a Soroban token on Stellar mainnet built on the Invariant Gravity Model: an account holding more than the Event Horizon L = √S HITZ, where S is the HITZ held by registered pools, is "vaulted" and can only send HITZ back to a pool. HITZ trades on its own exchange, the Sovereign Vault, with constant-product pools against XLM and USDC. Bots, apps and AI agents can quote and build swaps through a keyless HTTP API or an MCP server; users always sign with their own wallet.
+> HITZ Protocol is an oracle-free financial primitive on Stellar mainnet (Soroban), built by Skyhitz to provide liquidity without outside LPs or price feeds. The Sovereign Vault, HITZ's own exchange, owns its liquidity (constant-product pools against XLM and USDC, no LP shares, no withdrawals), follows the market through arbitrage instead of an oracle, and keeps part of every arbitrage profit in its pools as a fee. The HITZ token bounds concentration per account: an account holding more than the Event Horizon L = √S HITZ, where S is the HITZ held by the protocol's registered pools, is "vaulted" and can only send HITZ back to a pool. Bots, apps and AI agents can quote and build swaps through a keyless HTTP API or an MCP server; users always sign with their own wallet.
 
 Key facts:
 
@@ -8,8 +8,9 @@ Key facts:
 - Sovereign Vault contract: CDEISYZM526FZJ4PDWNVKD7UHXFO4ATT46K47YTUQAOLWZQV64ANNBWU
 - Listed assets: XLM (CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA) and Circle USDC (CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75)
 - Fee: 1% per hop when the vault is calm, rising up to 10% while one asset is dislocated against another, then decaying back (2-hour time constant)
-- Event Horizon: about 9,900 HITZ today; live value at https://skyhitz.io/api/v1/vault (hitz.event_horizon)
-- The vault has no withdrawals, no LP tokens and no oracle; code changes and new listings wait 7 days
+- Event Horizon: about 9,900 HITZ today (about $0.32), so most purchases vault the buyer; live value at https://skyhitz.io/api/v1/vault (hitz.event_horizon)
+- The limit is per account, not per person; registered pools and routers (the vault, the treasury, the email gateway's gas sponsor) are exempt
+- The vault has no withdrawals, no LP tokens and no oracle; code changes and new listings wait 7 days, while the token's admin can change its registry of pools and routers at once
 
 ## Trade HITZ
 
@@ -19,11 +20,12 @@ Key facts:
 - [Integrate page](https://skyhitz.io/integrate/): setup for Claude, Claude Code, Cursor and other MCP clients, curl and JavaScript examples, live vault numbers
 - [Web app](https://skyhitz.io): trade with a Stellar wallet or an email account
 - [Arbitrage bot](https://docs.skyhitz.io/vault/arbitrage-bot): the bot Skyhitz runs between the vault and the Stellar DEX (its trades: https://skyhitz.io/api/v1/bot), and how to run your own
+- [HITZ Terminal](https://skyhitz.io/terminal/): XLM market, leverage and on-chain flow data with an API (https://skyhitz.io/api/terminal); paid plans are paid in USDC or XLM through one vault swap that buys HITZ for the treasury
 
 ## Docs
 
 - [Overview](https://docs.skyhitz.io/)
-- [Whitepaper](https://docs.skyhitz.io/whitepaper): the Invariant Gravity Model and the Sovereign Vault
+- [Whitepaper](https://docs.skyhitz.io/whitepaper): how HITZ Protocol provides liquidity without mercenary LPs or oracles, the vault's fee, the Event Horizon, admin powers and known limits
 - [Contract integration guide](https://docs.skyhitz.io/vault/integration): calls, errors, the fee math, events, arbitrage sizing, calling from a contract
 - [Security review](https://docs.skyhitz.io/security/audit)
 - [Legal disclosure](https://docs.skyhitz.io/legal)

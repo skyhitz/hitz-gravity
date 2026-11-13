@@ -388,6 +388,12 @@ v2.0.0 at the same address, vault `CDEISYZM…NNBWU` registered and seeded with
 10% of the Aquarius liquidity); see MIGRATION.md for the transaction record.
 Step E, the audit and the multisig are still ahead.
 
+Update on Nov 13, 2026: the rest of the Aquarius liquidity was deposited on
+Nov 9 (about $5,800 in the vault), the four third-party routers were removed
+on Nov 8, and the arbitrage bot has traded live since Nov 12. Step E, the
+audit and the multisig are still ahead: one single-signature account holds
+both admin roles and the treasury.
+
 ### Contracts
 
 - [x] Unit tests: 97 token, 43 vault, 5 integration (`cargo test --workspace`)
@@ -405,8 +411,10 @@ Step E, the audit and the multisig are still ahead.
 - [ ] Independent audit of both contracts and the migration (P-3)
 - [x] Tag `vX.Y.Z` and `sovereign-vault-vX.Y.Z`; confirm Stellar Expert validates both
       (`v2.0.0` and `sovereign-vault-v1.0.0`, both verified against `2807ed1`)
-- [ ] Confirm swap resource fees on testnet (~0.013 XLM measured in tests);
-      confirm arbitrage still pays at real gas
+- [x] Confirm swap resource fees; confirm arbitrage still pays at real gas
+      (measured on mainnet instead of testnet: a vault swap was charged
+      0.0019 XLM, and the bot's round trips clear a 0.02 XLM floor after fees;
+      `research/arb-bot-replay`)
 
 ### Migration (`contracts/sovereign-vault/MIGRATION.md`)
 
@@ -415,10 +423,13 @@ Step E, the audit and the multisig are still ahead.
 - [x] Remove the Aquarius pools before anything lets HITZ out of them (stale 27% gap)
 - [x] Seed at the market cross-rate; check `rate(XLM, USDC)` within 0.1%,
       `dislocation` zero and a 1% fee in `pools()` (10% soft-launch seed)
-- [ ] Deposit the remaining withdrawn liquidity (V-1: at the soft-launch
-      depth a $20 trade pays the 10% cap)
+- [x] Deposit the remaining withdrawn liquidity (Nov 9, 2026). V-1 still
+      applies at this depth: a $20 purchase pays about 11% all in
 - [ ] Finish or move the reparation campaign, then remove the sponsor router
-- [ ] Prune the registry to the vault; renounce passes its guard
+- [ ] Prune the registry to the vault; renounce passes its guard (the four
+      third-party routers were removed on Nov 8, 2026; the treasury and the
+      sponsor remain, and the HITZ Terminal now needs a registered treasury:
+      MIGRATION.md, step E)
 
 ### Arbitrage and integration
 
@@ -429,7 +440,9 @@ Step E, the audit and the multisig are still ahead.
       account that deployed each bot): `GA6RKSBP…` (`CDCAZUHZ…`,
       `CC6QAV7J…`), `GDJMOSUF…` (`CBNVK5PE…`), `GDXGYASW…` (`CDWMA5P5…`),
       `GAXY7IZA…` (`CA6XIZJX…`)
-- [ ] Run the example bot against the vault on testnet end to end
+- [x] Run the example bot against the vault on testnet end to end
+      (`frontend/scripts/arb-testnet-rehearsal.mjs`, with the vault's mainnet
+      bytecode); the bot trades on mainnet since Nov 12, 2026
 
 ### Product
 

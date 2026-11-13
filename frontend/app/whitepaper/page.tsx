@@ -8,11 +8,12 @@
  * map to `###` blocks.
  *
  * Style differences that are NOT content drift:
- *   - JSX wrappers (Var, FormulaBlock, InfoBox, CodeBlock, TierCard) render
- *     things the markdown does with inline formatting or fenced code.
+ *   - JSX wrappers (Var, FormulaBlock, InfoBox, CodeBlock, TierCard,
+ *     DataTable) render things the markdown does with inline formatting,
+ *     fenced code or plain tables.
  *   - The page has a sticky nav + footer chrome the markdown can't.
- *   - The markdown uses plain tables for the gravity table; the page uses a
- *     styled <table>. Same rows, same semantics.
+ *   - Section references and links point at GitHub or the live API here,
+ *     where the markdown links to files in the repo.
  *
  * House style: no em-dashes. Use commas or periods.
  */
@@ -22,10 +23,12 @@ import { CONTRACT_ID } from "../lib/stellar";
 import { VAULT_ID } from "../lib/vault";
 
 export const metadata: Metadata = {
-  title: "Gravity HITZ. Whitepaper",
+  title: "HITZ Protocol. Whitepaper",
   description:
-    "The Invariant Gravity Model: a decentralization primitive for Soroban tokens on Stellar, and the Sovereign Vault HITZ trades on.",
+    "How HITZ Protocol provides liquidity without mercenary LPs or oracles: the Sovereign Vault, its dislocation fee, and the HITZ token's Event Horizon.",
 };
+
+const GITHUB = "https://github.com/skyhitz/hitz-gravity/blob/main";
 
 export default function Whitepaper() {
   return (
@@ -39,7 +42,7 @@ export default function Whitepaper() {
           >
             ← Home
           </Link>
-          <span className="text-xs text-muted font-mono">v6.0 · 2026</span>
+          <span className="text-xs text-muted font-mono">v7.0 · November 2026</span>
         </div>
       </nav>
 
@@ -51,53 +54,274 @@ export default function Whitepaper() {
               Whitepaper
             </p>
             <h1 className="text-4xl font-bold tracking-tight leading-tight">
-              The Invariant Gravity Model
+              HITZ Protocol
             </h1>
             <p className="text-xl text-muted font-light">
-              A decentralization primitive for Soroban tokens
+              Oracle-free, protocol-owned liquidity on Stellar
             </p>
           </div>
           <div className="w-12 h-px bg-border" />
           <p className="text-muted text-base leading-relaxed max-w-xl">
-            HITZ applies a square-root invariant to every transfer. As total
-            liquidity grows, individual holding limits rise, but always slower
-            than the reserves themselves, permanently bounding concentration.
-            Since November 2026 HITZ trades on its own exchange, the Sovereign
-            Vault, whose fee rises while one asset is dislocated against
-            another.
+            HITZ Protocol is an oracle-free financial primitive on Stellar
+            (Soroban). Its goal is to solve liquidity provisioning without
+            depending on outside capital (mercenary LPs) or outside price feeds
+            (oracles). Two contracts form a closed loop. The Sovereign Vault,
+            HITZ&apos;s own exchange, owns its liquidity, follows the market
+            through arbitrage instead of an oracle, and keeps part of every
+            arbitrage profit in its pools as a fee, so the liquidity compounds.
+            The HITZ token bounds concentration per account: an account holding
+            more than the Event Horizon L = √S, where S is the HITZ in the
+            protocol&apos;s pools, can send HITZ only back into a pool.
           </p>
         </header>
 
-        {/* I. Problem */}
-        <Section number="I" title="The Concentration Problem">
+        {/* I. The Liquidity Problem */}
+        <Section number="I" title="The Liquidity Problem">
           <p>
-            Most fungible tokens have no mechanism to prevent a single address
-            from accumulating an unbounded fraction of supply. Whales can
-            silently dominate governance, markets, and liquidity without
-            triggering any on-chain constraint.
+            A token is only as usable as the liquidity behind it, and most
+            tokens rent theirs.
+          </p>
+          <ul className="list-disc list-inside space-y-1 text-muted text-sm pl-2">
+            <li>
+              <strong>Mercenary liquidity.</strong>{" "}Liquidity providers deposit
+              for incentives and withdraw when the incentives end, often when the
+              market needs them most. Paying them costs the project tokens, and
+              the depth leaves with them.
+            </li>
+            <li>
+              <strong>Oracles.</strong>{" "}A pool that prices itself from an
+              outside feed trusts the feed&apos;s operator and inherits its
+              failures: stale updates, outages and manipulation.
+            </li>
+            <li>
+              <strong>Arbitrage leakage.</strong>{" "}A plain constant-product pool
+              needs neither, but every time the market moves, arbitrageurs take
+              the price gap out of the pool, and a flat fee keeps only a small
+              share of it.
+            </li>
+          </ul>
+          <p>
+            HITZ&apos;s first pools, on Aquarius, show the last point: from May
+            22 to October 2, 2026, 3,031 arbitrage cycles took $52.78 from about
+            $2,800 of liquidity, while the pools&apos; half of the 0.1% fee kept
+            about $4.
           </p>
           <p>
-            Existing approaches, such as vesting schedules, transfer limits and
-            blacklists, are either static, admin-dependent, or trivially
-            circumvented. None of them self-adjust as the ecosystem grows.
-          </p>
-          <p>
-            HITZ solves this with a{" "}
-            <em>dynamic, self-adjusting holding limit</em> rooted in the amount
-            of real liquidity the protocol has attracted. The more value the
-            ecosystem holds in trusted pools, the more any individual can hold.
-            But the relationship is a square root, perpetually sub-linear.
+            HITZ Protocol answers all three with liquidity the protocol owns,
+            priced by arbitrage, behind a fee that keeps most of what the
+            arbitrage is worth.
           </p>
         </Section>
 
-        {/* II. The Model */}
-        <Section number="II" title="The Gravity Model">
+        {/* II. The Closed Loop */}
+        <Section number="II" title="The Closed Loop">
+          <p>Two contracts, each with one job, feed each other:</p>
+          <ol className="list-decimal list-inside space-y-1 text-muted text-sm pl-2">
+            <li>
+              <strong>The vault owns the liquidity.</strong>{" "}One
+              constant-product pool per trusted asset (XLM and USDC today), each
+              against HITZ. The protocol seeded it, anyone can add to it, and
+              nothing leaves it except swap outputs (Section III).
+            </li>
+            <li>
+              <strong>Arbitrage keeps its prices.</strong>{" "}When one asset moves
+              against another elsewhere, the vault&apos;s rate between them falls
+              behind until someone trades it back. There is no oracle to wait
+              for.
+            </li>
+            <li>
+              <strong>The fee keeps the profit.</strong>{" "}The fee rises with how
+              far a trade moves one asset against another and stays in the pool
+              it came from, so the arbitrage that restores the price pays the
+              vault for most of the gap. Every trade leaves k, the pools&apos;
+              depth, a little higher.
+            </li>
+            <li>
+              <strong>The token ties holdings to that depth.</strong>{" "}The HITZ
+              in the protocol&apos;s pools is Total Mass <Var>S</Var>, and no
+              account can hold more than <Var>L</Var> = √<Var>S</Var> HITZ and
+              still move it freely (Section IV). Above <Var>L</Var>, HITZ can only
+              go back into a pool, which adds to <Var>S</Var>.
+            </li>
+          </ol>
+          <p>
+            The loop needs no price feed and no liquidity provider who can
+            leave. What it needs is trading: arbitrage to keep the price honest,
+            and flow (purchases, sales, the HITZ Terminal&apos;s subscriptions)
+            for the fee to compound on.
+          </p>
+        </Section>
+
+        {/* III. The Sovereign Vault */}
+        <Section number="III" title="The Sovereign Vault">
+          <p>
+            HITZ&apos;s own exchange: one constant-product pool per trusted
+            asset, each against HITZ, all sharing HITZ. It started on November
+            4, 2026 with XLM and USDC; more can be listed later without new
+            code, up to 16 in all. HITZ ↔ asset is one hop through that
+            asset&apos;s pool; asset ↔ asset is two hops through HITZ in one
+            call, and never moves HITZ out of the vault.
+          </p>
+
+          <SubHeading>The Dislocation Fee</SubHeading>
+          <p>
+            Each pool prices HITZ in its asset, and two pools together give the
+            vault&apos;s exchange rate between their assets. Every pool keeps
+            an exponential average of its own log price (2-hour time constant)
+            and stores how far it sits from that average: its{" "}
+            <em>deviation</em>. A pair&apos;s <em>dislocation</em> is the
+            difference of the two deviations, so a move in HITZ itself shifts
+            every pool alike and dislocates nothing. A hop through the pool of
+            asset A pays:
+          </p>
+          <CodeBlock>{`fee = 1% × e^(100 × D)     capped at 10%
+D   = the largest |dislocation| of A against any reference pool,
+      in the state the hop leaves behind`}</CodeBlock>
+          <DataTable
+            head={["D", "Fee"]}
+            rows={[
+              ["0", "1.00%"],
+              ["0.5%", "1.65%"],
+              ["1%", "2.72%"],
+              ["1.5%", "4.48%"],
+              ["2%", "7.39%"],
+              ["2.30% or more", "10.00%"],
+            ]}
+            mono
+          />
+          <ul className="list-disc list-inside space-y-1 text-muted text-sm pl-2">
+            <li>
+              <strong>One asset relative to another.</strong>{" "}HITZ&apos;s own
+              price never enters D.
+            </li>
+            <li>
+              <strong>The worst pair.</strong>{" "}A hop pays for its asset&apos;s
+              most dislocated pair, so no route through a third asset and no
+              split into single hops is cheaper.
+            </li>
+            <li>
+              <strong>References.</strong>{" "}A pool counts as a reference only if
+              it holds at least 1/8 of the other pool&apos;s HITZ, so a shallow
+              pool can&apos;t raise a deep one&apos;s fee.
+            </li>
+            <li>
+              <strong>Decay.</strong>{" "}Deviations decay toward zero with the
+              2-hour time constant, so after a move the fee falls back to 1% on
+              its own.
+            </li>
+          </ul>
+          <p>
+            The fee is withheld from each hop&apos;s output and stays in the
+            pool it was drained from: k never decreases. When the market moves
+            one asset against another, the vault&apos;s rate falls behind;
+            closing that gap is the arbitrage, and its fee is what deepens the
+            pools.
+          </p>
+
+          <SubHeading>Protocol-Owned Liquidity</SubHeading>
+          <p>
+            The admin seeds each listed asset&apos;s pool once, at its market
+            price. After that anyone can deposit at the pool&apos;s current
+            ratio, as a contribution: there are no LP shares and no
+            withdrawals, and nothing leaves the vault except swap outputs. The
+            liquidity HITZ trades against can&apos;t be pulled.
+          </p>
+          <p>
+            The vault&apos;s liquidity came from the protocol&apos;s own
+            Aquarius positions: 10% seeded on November 4, 2026 and the rest
+            deposited on November 9, about $5,800 in all (live figures at{" "}
+            <ExternalLink href="https://skyhitz.io/api/v1/vault">/api/v1/vault</ExternalLink>
+            ).
+          </p>
+
+          <SubHeading>Arbitrage Instead of an Oracle</SubHeading>
+          <p>
+            The vault reads no price feed. When the market moves, its rate lags
+            until an arbitrageur trades it back, and anyone may: the{" "}
+            <ExternalLink href={`${GITHUB}/contracts/sovereign-vault/INTEGRATION.md`}>integration guide</ExternalLink>{" "}
+            documents the calls and how to size a trade. Skyhitz runs an{" "}
+            <ExternalLink href={`${GITHUB}/frontend/ARB_BOT.md`}>open-source bot</ExternalLink>{" "}
+            that does it every five minutes from a public account (
+            <ExternalLink href="https://skyhitz.io/api/v1/bot">/api/v1/bot</ExternalLink>
+            ), paying the same fees as everyone. It buys on the Stellar DEX the
+            asset the vault overpays for, then sells it into the vault, with
+            on-chain minimums on both legs.
+          </p>
+          <p>
+            Replayed on the Stellar DEX&apos;s real prices from June 12 to
+            November 11, 2026, at the vault&apos;s depth of November 11: without
+            a bot the vault&apos;s XLM price sat 8.6% off the market on average,
+            and more than 5% off 64% of the time; with the bot, 2.1% off on
+            average, and more than 5% off 3% of the time.
+          </p>
+
+          <SubHeading>What the Fee Keeps</SubHeading>
+          <p>
+            The fee prices how far a trade moves one asset&apos;s rate from its
+            recent average. The trade that brings the vault to a new market
+            price therefore pays most of the gap, in steps as the average
+            catches up.
+          </p>
+          <ul className="list-disc list-inside space-y-1 text-muted text-sm pl-2">
+            <li>
+              <strong>Against a flat fee.</strong>{" "}Replayed from May 22 to
+              October 31, 2026 on the real XLM price, from the old pools&apos;
+              reserves, with an arbitrageur calibrated to their real history,
+              the vault&apos;s fee gained $54.15 over holding the assets, against
+              $8.02 for the Aquarius pools&apos; 0.1%, and arbitrage took $13.35
+              from the pools instead of $62.44.
+            </li>
+            <li>
+              <strong>Who keeps the arbitrage.</strong>{" "}In the{" "}
+              <ExternalLink href={`${GITHUB}/research/arb-bot-replay/README.md`}>bot replay</ExternalLink>
+              , the vault&apos;s fees came to 67% to 89% of what the arbitrage
+              made in all, depending on how large a profit the arbitrageur
+              waited for: $37.72 for the vault against $6.78 for the bot at the
+              bot&apos;s own setting.
+            </li>
+          </ul>
+
+          <SubHeading>Flow Into the Vault</SubHeading>
+          <p>
+            Three kinds of trade pay the fee: arbitrage, people buying and
+            selling HITZ, and the{" "}
+            <Link href="/terminal/" className="text-accent hover:text-accent-hover underline">
+              HITZ Terminal
+            </Link>
+            . The Terminal sells XLM market, leverage and on-chain flow data;
+            its paid plans are priced in dollars and paid in USDC or XLM, and
+            each payment is one vault swap that buys HITZ and sends it to the
+            treasury. The vault earns its fee on every subscription.
+          </p>
+
+          <SubHeading>The Event Horizon Inside the Vault</SubHeading>
+          <p>
+            The vault is a registered pool, so the HITZ it holds is Total Mass.
+            A purchase moves HITZ out of the vault and lowers <Var>S</Var> a
+            little; a sale moves it in and raises <Var>S</Var>. The token judges
+            a buyer against the <Var>L</Var> the purchase leaves behind. A
+            vaulted account can always sell into the vault.
+          </p>
+
+          <SubHeading>Why HITZ Runs Its Own Exchange</SubHeading>
+          <p>
+            Each pool registration binds the pool&apos;s code. On October 2,
+            2026 Aquarius upgraded both HITZ pools, the token&apos;s integrity
+            guard stopped trusting them, and trading froze. Rebinding external
+            pools to code nobody reviewed would hand their price gaps to
+            arbitrageurs and trust code HITZ doesn&apos;t control. The vault is
+            code HITZ controls, under the same 7-day timelock as the token, and
+            it trades HITZ against every listed asset at once.
+          </p>
+        </Section>
+
+        {/* IV. The Event Horizon */}
+        <Section number="IV" title="The Event Horizon">
           <p>
             Define <Var>S</Var> as the <strong>Total Mass</strong>, the sum of
             HITZ balances held by the admin-registered pools: today the
-            Sovereign Vault (Section V) and the treasury account. <Var>S</Var>{" "}
-            is an O(1) accumulator updated on every transfer in or out of a
-            pool.
+            Sovereign Vault and the treasury. <Var>S</Var>{" "}is an O(1)
+            accumulator updated on every transfer in or out of a pool.
           </p>
           <p>
             The <strong>Safety Limit</strong> <Var>L</Var>, displayed in the
@@ -109,49 +333,67 @@ export default function Whitepaper() {
           </FormulaBlock>
 
           <p>
-            where <Var>d</Var>{" "}= 7 (Stellar&apos;s standard decimal precision).
-            Any account whose balance exceeds <Var>L</Var> is{" "}
-            <strong>vaulted</strong>: it can only send HITZ to a registered
-            pool until its balance is back under <Var>L</Var>, or until the
-            ecosystem grows enough that <Var>L</Var> rises above it.
+            where <Var>d</Var>{" "}= 7 (Stellar&apos;s standard decimal precision),
+            so that in whole HITZ, <Var>L</Var> = √<Var>S</Var>. Any account
+            whose balance exceeds <Var>L</Var> is <strong>vaulted</strong>: it
+            can only send HITZ to a registered pool until its balance is back
+            under <Var>L</Var>, or until the vault grows enough that{" "}
+            <Var>L</Var> rises above it.
           </p>
 
           <InfoBox color="purple">
-            <strong>Law of Decentralization:</strong> A 10,000× growth in pool
-            reserves only yields a 100× growth in individual holding limits.
-            Concentration can never keep pace with liquidity.
+            <strong>Square-root rule:</strong> <Var>L</Var> grows with the square
+            root of <Var>S</Var>: a 10,000× deeper vault allows a 100× larger
+            account. As the vault deepens, the most one account can hold
+            shrinks as a share of it.
           </InfoBox>
 
-          <table className="w-full text-sm mt-2">
-            <thead>
-              <tr className="text-muted border-b border-border">
-                <th className="text-left py-2 pr-4 font-medium">Pool Reserves (S)</th>
-                <th className="text-left py-2 pr-4 font-medium">Event Horizon (L)</th>
-                <th className="text-left py-2 font-medium">Max single holder</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {[
-                ["100 HITZ", "10 HITZ", "10%"],
-                ["10,000 HITZ", "100 HITZ", "1%"],
-                ["1,000,000 HITZ", "1,000 HITZ", "0.1%"],
-                ["100,000,000 HITZ", "10,000 HITZ", "0.01%"],
-              ].map(([s, l, pct]) => (
-                <tr key={s}>
-                  <td className="py-2 pr-4 font-mono text-purple">{s}</td>
-                  <td className="py-2 pr-4 font-mono text-accent">{l}</td>
-                  <td className="py-2 text-muted">{pct}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <DataTable
+            head={["Total Mass (S)", "Event Horizon (L)", "L as a share of S"]}
+            rows={[
+              ["100 HITZ", "10 HITZ", "10%"],
+              ["10,000 HITZ", "100 HITZ", "1%"],
+              ["1,000,000 HITZ", "1,000 HITZ", "0.1%"],
+              ["100,000,000 HITZ", "10,000 HITZ", "0.01%"],
+            ]}
+            mono
+          />
+          <p>Today S is about 98.4 million HITZ and L about 9,900 HITZ.</p>
+
+          <SubHeading>What the Limit Does Not Do</SubHeading>
+          <ul className="list-disc list-inside space-y-1 text-muted text-sm pl-2">
+            <li>
+              <strong>It limits accounts, not people.</strong>{" "}Stellar has no
+              identity layer, so one owner can hold HITZ in many accounts, each
+              under <Var>L</Var>. The rule guarantees something narrower: no
+              single account can hold more than <Var>L</Var> and still move it
+              freely.
+            </li>
+            <li>
+              <strong>It does not cap purchases.</strong>{" "}Incoming transfers
+              never fail (Section VI), so an account can buy far past{" "}
+              <Var>L</Var>; it can then only sell back into the vault.
+            </li>
+            <li>
+              <strong>Anyone can push an account over L</strong>{" "}by sending it
+              HITZ. The account can still sell into the vault, and is released
+              once it is back under <Var>L</Var>.
+            </li>
+            <li>
+              <strong>Registered pools and routers are exempt.</strong>{" "}Today:
+              the vault; the treasury, which is the admin&apos;s account, holds
+              about 9.96 million HITZ and is registered as a pool, so its HITZ
+              counts in <Var>S</Var>; and the email gateway&apos;s gas sponsor, a
+              router holding about 33,000 HITZ for the legacy reparation.
+            </li>
+          </ul>
         </Section>
 
-        {/* III. Two-Tier Identity */}
-        <Section number="III" title="Two-Tier Identity">
+        {/* V. Pools and Routers */}
+        <Section number="V" title="Pools and Routers">
           <p>
             Not all contract addresses are equal. HITZ distinguishes two classes
-            of trusted infrastructure, each with distinct physics:
+            of trusted infrastructure, each with its own rules:
           </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 my-6">
@@ -173,7 +415,7 @@ export default function Whitepaper() {
               tag="register_router_address"
               items={[
                 "Never affect Total Mass S",
-                "Pass-through only (the gas sponsor, aggregators)",
+                "Pass-through only (today the email gateway's gas sponsor)",
                 "Vaulted users CANNOT send to them",
                 "Never vaulted themselves",
                 "No mass reconciliation needed",
@@ -189,18 +431,16 @@ export default function Whitepaper() {
             pool. This was abandoned because DEX factories allow anyone to
             deploy a contract with any Wasm hash, enabling laundering via fake
             pools.{" "}
-            <strong>
-              Strict address whitelisting is the only secure approach.
-            </strong>
+            <strong>Pool status is granted per address, never by bytecode.</strong>
           </p>
         </Section>
 
-        {/* IV. Transfer Physics */}
-        <Section number="IV" title="Transfer Physics">
-          <SubHeading>The Roach Motel (Silent Trap)</SubHeading>
+        {/* VI. Transfer Rules */}
+        <Section number="VI" title="Transfer Rules">
+          <SubHeading>Incoming Transfers Always Succeed</SubHeading>
           <p>
             Incoming transfers <em>never</em>{" "}revert due to vault logic. If a
-            recipient&apos;s new balance exceeds <Var>L</Var>, they are silently
+            recipient&apos;s new balance exceeds <Var>L</Var>, the recipient is
             vaulted, but the transfer succeeds and returns a clean SEP-41 void.
             This is what lets an exchange pay out a swap&apos;s output without
             ever failing on the buyer&apos;s balance.
@@ -209,10 +449,10 @@ export default function Whitepaper() {
           <SubHeading>The Sender Gate (Lazy-Synced)</SubHeading>
           <p>
             Before the sender gate fires, the sender&apos;s stored vault flag is
-            re-synced against the current <Var>L</Var>. If the protocol grew
-            past the sender&apos;s balance since they were last trapped, the
-            flag clears inline and the transfer proceeds. No panic wall around
-            an account whose balance is already safe. After the live re-sync, a
+            re-synced against the current <Var>L</Var>. If the vault grew past
+            the sender&apos;s balance since they were last vaulted, the flag
+            clears inline and the transfer proceeds. No wall around an account
+            whose balance is already safe. After the live re-sync, a
             still-vaulted sender is blocked unless all four conditions hold:
           </p>
           <CodeBlock>{`!is_pool(from)
@@ -233,10 +473,10 @@ export default function Whitepaper() {
             After every balance-changing call (transfer, transfer_from, mint,
             burn) the recipient&apos;s vault flag is re-evaluated against their
             new balance and the current <Var>L</Var>, after <Var>S</Var> has
-            been updated. A previously trapped holder whose balance now sits
-            below <Var>L</Var> (because the ecosystem expanded) is released in
-            the same transaction. Stored flags are never stale for longer than
-            one state-changing call.
+            been updated. A previously vaulted holder whose balance now sits
+            below <Var>L</Var> (because the vault grew) is released in the same
+            transaction. Stored flags are never stale for longer than one
+            state-changing call.
           </p>
 
           <SubHeading>Vault Release</SubHeading>
@@ -257,138 +497,22 @@ export default function Whitepaper() {
               effect on <Var>S</Var>, nothing back.
             </li>
             <li>
-              The ecosystem grows: <Var>S</Var> increases, <Var>L</Var>{" "}rises
-              past the account&apos;s balance, and the next action
-              auto-releases.
+              The vault grows: <Var>S</Var> increases, <Var>L</Var>{" "}rises past
+              the account&apos;s balance, and the next action auto-releases.
             </li>
           </ol>
           <p>
             The smallest release is the least <Var>x</Var> with{" "}
             <code className="font-mono text-xs">balance − x ≤ √((S + x) × 10^7)</code>.
-            For UIs that want to reflect physics without triggering a state
+            For UIs that want to reflect the rule without triggering a state
             change,{" "}
             <code className="font-mono text-xs">is_actually_vaulted(address)</code>{" "}
             evaluates the current <Var>L</Var> live, ignoring the stored flag.
           </p>
         </Section>
 
-        {/* V. The Sovereign Vault */}
-        <Section number="V" title="The Sovereign Vault">
-          <p>
-            HITZ&apos;s own exchange: one constant-product pool per trusted
-            asset, each against HITZ, all sharing HITZ. It started on November
-            4, 2026 with XLM and USDC; more can be listed later without new
-            code, up to 16 in all. HITZ ↔ asset is one hop through that
-            asset&apos;s pool; asset ↔ asset is two hops through HITZ in one
-            call, and never moves HITZ out of the vault.
-          </p>
-          <p>
-            <strong>Why HITZ needs its own.</strong>{" "}Each pool registration
-            binds the pool&apos;s code. On October 2, 2026 Aquarius upgraded
-            both HITZ pools, the token&apos;s integrity guard stopped trusting
-            them, and trading froze. Rebinding external pools to code nobody
-            reviewed would hand their price gaps to arbitrageurs and trust code
-            HITZ doesn&apos;t control. The vault is code HITZ controls, under
-            the same 7-day timelock as the token, and it compounds: HITZ is
-            backed by every listed asset at once.
-          </p>
-
-          <SubHeading>The Dislocation Fee</SubHeading>
-          <p>
-            Each pool prices HITZ in its asset, and two pools together give the
-            vault&apos;s exchange rate between their assets. Every pool keeps
-            an exponential average of its own log price (2-hour time constant)
-            and stores how far it sits from that average: its{" "}
-            <em>deviation</em>. A pair&apos;s <em>dislocation</em> is the
-            difference of the two deviations, so a move in HITZ itself shifts
-            every pool alike and dislocates nothing. A hop through the pool of
-            asset A pays:
-          </p>
-          <CodeBlock>{`fee = 1% × e^(100 × D)     capped at 10%
-D   = the largest |dislocation| of A against any reference pool,
-      in the state the hop leaves behind`}</CodeBlock>
-          <table className="w-full text-sm mt-2">
-            <thead>
-              <tr className="text-muted border-b border-border">
-                <th className="text-left py-2 font-medium">D</th>
-                <th className="text-left py-2 font-medium">Fee</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {[
-                ["0", "1.00%"],
-                ["0.5%", "1.65%"],
-                ["1%", "2.72%"],
-                ["1.5%", "4.48%"],
-                ["2%", "7.39%"],
-                ["2.30% or more", "10.00%"],
-              ].map(([d, fee]) => (
-                <tr key={d}>
-                  <td className="py-2 font-mono text-purple">{d}</td>
-                  <td className="py-2 font-mono text-accent">{fee}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <ul className="list-disc list-inside space-y-1 text-muted text-sm pl-2">
-            <li>
-              <strong>One asset relative to another.</strong>{" "}HITZ&apos;s own
-              price never enters D.
-            </li>
-            <li>
-              <strong>The worst pair.</strong>{" "}A hop pays for its asset&apos;s
-              most dislocated pair, so no route through a third asset and no
-              split into single hops is cheaper.
-            </li>
-            <li>
-              <strong>References.</strong>{" "}A pool counts as a reference only if
-              it holds at least 1/8 of the other pool&apos;s HITZ, so a shallow
-              pool can&apos;t raise a deep one&apos;s fee.
-            </li>
-            <li>
-              <strong>Decay.</strong> Deviations decay toward zero with the
-              2-hour time constant, so after a move the fee falls back to 1% on
-              its own.
-            </li>
-          </ul>
-          <p>
-            The fee is withheld from each hop&apos;s output and stays in the
-            pool it was drained from: k never decreases. When the market moves
-            one asset against another, the vault&apos;s rate falls behind;
-            closing that gap is the arbitrage, and its fee is what deepens the
-            pools.
-          </p>
-
-          <SubHeading>Liquidity</SubHeading>
-          <p>
-            The admin seeds each listed asset&apos;s pool once, at its market
-            price. After that anyone can deposit at the pool&apos;s current
-            ratio. There are no LP shares and no withdrawals: nothing leaves
-            the vault except swap outputs.
-          </p>
-
-          <SubHeading>Gravity Inside the Vault</SubHeading>
-          <p>
-            The vault is a registered pool, so the HITZ it holds is Total Mass.
-            A purchase moves HITZ out of the vault and lowers <Var>S</Var> a
-            little; a sale moves it in and raises <Var>S</Var>. The token judges
-            a buyer against the <Var>L</Var> the purchase leaves behind. A
-            vaulted account can always sell into the vault.
-          </p>
-
-          <SubHeading>Admin and Timelocks</SubHeading>
-          <p>
-            The vault&apos;s admin has two powers, both public for 7 days before
-            they can run: upgrading the code and listing a new trusted asset.
-            Seeding a listed asset is the admin&apos;s too.{" "}
-            <code className="font-mono text-xs">renounce_upgrades</code> ends
-            upgrades for good and keeps listing;{" "}
-            <code className="font-mono text-xs">renounce</code> ends everything.
-          </p>
-        </Section>
-
-        {/* VI. Hard Mint Cap */}
-        <Section number="VI" title="Hard Mint Cap">
+        {/* VII. Supply */}
+        <Section number="VII" title="Supply">
           <p>
             HITZ compiles an absolute supply ceiling into the contract bytecode:
           </p>
@@ -423,20 +547,72 @@ D   = the largest |dislocation| of A against any reference pool,
             <code className="font-mono text-xs">max_supply()</code> returns the
             compiled ceiling.
           </p>
+          <p>The supply is fully minted. Where it is on November 13, 2026:</p>
+          <DataTable
+            head={["Holder", "HITZ", "Share"]}
+            rows={[
+              ["Sovereign Vault (its pools)", "88,420,475", "88.4%"],
+              ["Treasury (the admin's account, a registered pool)", "9,963,901", "10.0%"],
+              ["Gas sponsor of the email gateway (a registered router)", "32,966", "0.03%"],
+              ["Every other account", "1,582,658", "1.6%"],
+            ]}
+          />
         </Section>
 
-        {/* VII. Implementation */}
-        <Section number="VII" title="On-Chain Implementation">
+        {/* VIII. Admin, Timelocks and Decentralization */}
+        <Section number="VIII" title="Admin, Timelocks and Decentralization">
+          <p>
+            HITZ Protocol is decentralized by design: prices need no oracle, the
+            liquidity needs no outside LPs, and anyone can trade, deposit or
+            arbitrage. The exception is the admin role. Today one account (
+            <code className="font-mono text-xs">GCAETBNB…OKGU</code>) is the
+            admin of both contracts and is the treasury.
+          </p>
+          <DataTable
+            head={["Power", "Contract", "Takes effect"]}
+            rows={[
+              ["Upgrade the code", "token, vault", "after a public 7-day notice"],
+              ["List a new trusted asset", "vault", "after a public 7-day notice"],
+              ["Seed a newly listed asset's pool, once", "vault", "immediately"],
+              ["Register or remove pools and routers", "token", "immediately"],
+              ["Hand the admin role to another account (both sign)", "token", "immediately"],
+              ["Mint, up to the cap", "token", "immediately (fully minted, so only after burns)"],
+            ]}
+          />
+          <p>
+            Registry changes are the strongest immediate power: registering an
+            address exempts it from the Event Horizon, and removing the vault
+            from the registry would cut <Var>S</Var>{" "}to the treasury&apos;s
+            balance, lower <Var>L</Var>{" "}to about 3,160 HITZ and stop the vault
+            from paying out HITZ. The vault&apos;s admin can&apos;t be rotated,
+            so the account&apos;s own signers are what protect it (
+            <ExternalLink href={`${GITHUB}/AUDIT.md`}>AUDIT.md</ExternalLink>,
+            findings T-3 and V-3).
+          </p>
+          <p>Each contract has a one-way exit:</p>
+          <ul className="list-disc list-inside space-y-1 text-muted text-sm pl-2">
+            <li>
+              <code className="font-mono text-xs">renounce_upgrades</code>{" "}freezes
+              the vault&apos;s code for good and keeps the timelocked listing;{" "}
+              <code className="font-mono text-xs">renounce</code> ends every vault
+              power.
+            </li>
+            <li>
+              <code className="font-mono text-xs">renounce_admin</code> ends
+              minting, upgrades and registry changes on the token for good. It
+              refuses while any registered address is a classic account or runs
+              code other than its approved hash, so the registry must be final
+              first. Today the treasury and the gas sponsor are classic accounts
+              in it.
+            </li>
+          </ul>
+        </Section>
+
+        {/* IX. Implementation */}
+        <Section number="IX" title="On-Chain Implementation">
           <p>
             HITZ is a{" "}
-            <a
-              href="https://stellar.org/developers/soroban"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-accent hover:text-accent-hover underline"
-            >
-              Soroban
-            </a>{" "}
+            <ExternalLink href="https://stellar.org/developers/soroban">Soroban</ExternalLink>{" "}
             smart contract on the Stellar network, fully implementing the{" "}
             <strong>SEP-41</strong> token interface.
           </p>
@@ -459,8 +635,8 @@ D   = the largest |dislocation| of A against any reference pool,
           </div>
         </Section>
 
-        {/* VIII. TTL Restoration */}
-        <Section number="VIII" title="State Archival (TTL)">
+        {/* X. TTL Restoration */}
+        <Section number="X" title="State Archival (TTL)">
           <p>
             Soroban persistent storage has a ~30-day TTL. An entry left
             untouched past that window is archived to cold storage until it is
@@ -521,8 +697,8 @@ D   = the largest |dislocation| of A against any reference pool,
           </p>
         </Section>
 
-        {/* IX. Security */}
-        <Section number="IX" title="Security Properties">
+        {/* XI. Security */}
+        <Section number="XI" title="Security Properties">
           {[
             {
               title: "No Wasm Hash Laundering",
@@ -538,7 +714,7 @@ D   = the largest |dislocation| of A against any reference pool,
             },
             {
               title: "Integrity-Bound Registrations",
-              body: "Each registered pool and router stores its current Wasm hash. A bytecode upgrade trips the integrity check on the next state-changing call, and the token stops trusting the address until the admin re-registers it.",
+              body: "Each registered pool and router stores its approved Wasm hash. If its code changes, the next state-changing call emits an integrity_drift_event and the address can no longer spend allowances; the admin reviews the new code and re-registers or removes it.",
             },
             {
               title: "No Burn Escape",
@@ -550,7 +726,7 @@ D   = the largest |dislocation| of A against any reference pool,
             },
             {
               title: "No Silent Expiry",
-              body: "Vault flags and balance keys share TTL extension calls. An expired vault key would silently free a trapped whale; we prevent this by always extending both together.",
+              body: "Vault flags and balance keys share TTL extension calls. An expired vault key would silently free a vaulted account; we prevent this by always extending both together.",
             },
             {
               title: "No Mass Underflow",
@@ -573,10 +749,61 @@ D   = the largest |dislocation| of A against any reference pool,
               </div>
             </div>
           ))}
+          <p>
+            Both contracts have been reviewed internally (
+            <ExternalLink href={`${GITHUB}/AUDIT.md`}>AUDIT.md</ExternalLink>),
+            with the findings and their status published; neither has had an
+            independent audit yet.
+          </p>
         </Section>
 
-        {/* X. Contracts */}
-        <Section number="X" title="Deployed Contracts">
+        {/* XII. Known Limits */}
+        <Section number="XII" title="Known Limits">
+          <ul className="list-disc list-inside space-y-1 text-muted text-sm pl-2">
+            <li>
+              <strong>Per account, not per person.</strong>{" "}The Event Horizon
+              can be spread across many accounts (Section IV).
+            </li>
+            <li>
+              <strong>Prices lag the market.</strong>{" "}Without an oracle, the
+              vault&apos;s price follows the market only as fast as arbitrage
+              moves it: 2.1% off on average in the bot replay, more in fast
+              moves. If no one arbitrages, its price goes stale.
+            </li>
+            <li>
+              <strong>L is small today.</strong>{" "}At November 2026 prices{" "}
+              <Var>L</Var> is worth about $0.32, so almost any purchase vaults
+              the buyer: that HITZ can then only be sold back into the vault,
+              until the vault grows enough to raise <Var>L</Var>. The swap screen
+              says so before you sign.
+            </li>
+            <li>
+              <strong>Purchases pay the fee too.</strong>{" "}Every hop pays at
+              least 1%, and a purchase through one pool dislocates it against the
+              others. At the vault&apos;s depth of November 2026, $5 of XLM buys
+              HITZ at about 2.2% all in, and $20 or more at 11% or more, with the
+              fee at its 10% cap. The swap screen shows the fee before you sign;
+              buying in smaller steps hours apart pays less.
+            </li>
+            <li>
+              <strong>Thin liquidity.</strong>{" "}About $5,800 in all: large trades
+              move the price far.
+            </li>
+            <li>
+              <strong>Listed assets carry their issuers&apos; risk.</strong>{" "}
+              Circle can freeze the vault&apos;s USDC, which would stop the USDC
+              pool; any listed asset&apos;s issuer has the same power over its
+              own pool.
+            </li>
+            <li>
+              <strong>Admin powers remain</strong>{" "}until renounced (Section
+              VIII).
+            </li>
+          </ul>
+        </Section>
+
+        {/* XIII. Contracts */}
+        <Section number="XIII" title="Deployed Contracts">
           {[
             {
               name: "HITZ token",
@@ -627,24 +854,17 @@ D   = the largest |dislocation| of A against any reference pool,
           ))}
           <p className="text-sm">
             Integrating with the vault:{" "}
-            <a
-              href="https://github.com/skyhitz/hitz-gravity/blob/main/contracts/sovereign-vault/INTEGRATION.md"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-accent hover:text-accent-hover underline"
-            >
-              INTEGRATION.md
-            </a>
+            <ExternalLink href={`${GITHUB}/contracts/sovereign-vault/INTEGRATION.md`}>INTEGRATION.md</ExternalLink>
             .
           </p>
         </Section>
 
         {/* Footer */}
         <footer className="pt-4 border-t border-border flex items-center justify-between text-xs text-muted">
-          <span>Gravity HITZ · 2026</span>
+          <span>HITZ Protocol · 2026</span>
           <div className="flex items-center gap-4">
             <a
-              href="https://github.com/skyhitz/hitz-gravity/blob/main/LEGAL.md"
+              href={`${GITHUB}/LEGAL.md`}
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-foreground transition-colors"
@@ -652,7 +872,7 @@ D   = the largest |dislocation| of A against any reference pool,
               Legal
             </a>
             <Link href="/" className="hover:text-foreground transition-colors">
-              Open Mainnet →
+              Open the app →
             </Link>
           </div>
         </footer>
@@ -699,6 +919,19 @@ function Var({ children }: { children: React.ReactNode }) {
   );
 }
 
+function ExternalLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-accent hover:text-accent-hover underline"
+    >
+      {children}
+    </a>
+  );
+}
+
 function FormulaBlock({ children }: { children: React.ReactNode }) {
   return (
     <div className="my-4 flex justify-center">
@@ -735,6 +968,39 @@ function CodeBlock({ children }: { children: React.ReactNode }) {
     <pre className="bg-card border border-border rounded-xl px-4 py-3 text-xs font-mono text-foreground overflow-x-auto leading-relaxed">
       {children}
     </pre>
+  );
+}
+
+/** A plain table: the first column in accent purple, the others muted, or all mono with `mono`. */
+function DataTable({ head, rows, mono }: { head: string[]; rows: string[][]; mono?: boolean }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm mt-2">
+        <thead>
+          <tr className="text-muted border-b border-border">
+            {head.map((h) => (
+              <th key={h} className="text-left py-2 pr-4 font-medium">
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border">
+          {rows.map((row) => (
+            <tr key={row[0]}>
+              {row.map((cell, i) => (
+                <td
+                  key={i}
+                  className={`py-2 pr-4 ${i === 0 ? (mono ? "font-mono text-purple" : "text-foreground") : mono ? "font-mono text-accent" : "text-muted"}`}
+                >
+                  {cell}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

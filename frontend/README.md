@@ -1,9 +1,10 @@
 # HITZ Frontend
 
-Next.js 16 app (static export) + a Cloudflare Worker for the email-based
-gas-sponsoring gateway and the on-chain data cron. Deployed as a single
-Worker with the Static Assets binding, Cloudflare's recommended successor
-to Pages.
+skyhitz.io, the app of HITZ Protocol: a Next.js 16 app (static export) + a
+Cloudflare Worker for the email-based gas-sponsoring gateway, the public API
+and MCP server, the HITZ Terminal, the arbitrage bot and the on-chain data
+cron. Deployed as a single Worker with the Static Assets binding,
+Cloudflare's recommended successor to Pages.
 
 The app trades through the HITZ Sovereign Vault
 (`CDEISYZM526FZJ4PDWNVKD7UHXFO4ATT46K47YTUQAOLWZQV64ANNBWU`): `app/lib/vault.ts`

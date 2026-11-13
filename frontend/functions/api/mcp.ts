@@ -30,7 +30,7 @@ const SERVER_INFO = {
 };
 
 const INSTRUCTIONS = [
-  "Trade HITZ, the Gravity token on Stellar mainnet, through its own exchange, the Sovereign Vault (pools against XLM and USDC).",
+  "Trade HITZ, the token of HITZ Protocol on Stellar mainnet, through its own exchange, the Sovereign Vault: protocol-owned pools against XLM and USDC, with no oracle.",
   "Flow: get_vault for prices and fees; quote to price a trade (pass account to check balances, trustlines and the Event Horizon);",
   "build_swap for an unsigned transaction from the user's own account; the user signs it in their Stellar wallet, or opens the",
   "sign.web link, a skyhitz.io page that signs with their wallet and submits; submit_transaction with a signed XDR; get_transaction to follow it.",

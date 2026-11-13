@@ -4,7 +4,10 @@ import { useState, useRef, useEffect } from "react";
 
 // v2 (Nov 4, 2026): the terms now cover the Sovereign Vault (fees, no
 // withdrawals, timelocked admin powers), so everyone accepts them again.
-export const CONSENT_KEY = "gravity-hitz-consent-v2";
+// v3 (Nov 13, 2026): corrected. The admin can change the token's registry at
+// once (which exempts an address from vaulting and moves L); v2 said the
+// developers could not affect any Vaulted state. Everyone accepts again.
+export const CONSENT_KEY = "gravity-hitz-consent-v3";
 
 interface Props {
   onAccept: () => void;
@@ -69,7 +72,7 @@ export default function ConsentModal({ onAccept }: Props) {
                 <p className="text-accent text-xs tracking-widest uppercase font-medium">
                   Legal Disclosure
                 </p>
-                <h2 className="text-xl font-bold tracking-tight">Gravity HITZ</h2>
+                <h2 className="text-xl font-bold tracking-tight">HITZ Protocol</h2>
                 <p className="text-muted text-sm">
                   Read before entering the protocol.
                 </p>
@@ -110,8 +113,10 @@ export default function ConsentModal({ onAccept }: Props) {
                   L is dynamic. It rises as HITZ enters registered pools and falls as it
                   leaves them, including whenever anyone buys HITZ from the vault, and a
                   purchase is judged against the L it leaves behind. An account safe today
-                  may be Vaulted tomorrow. The developers cannot override, bypass, or
-                  reverse any Vaulted state.
+                  may be Vaulted tomorrow. No one can set or clear a Vaulted state
+                  directly, but the token&apos;s admin can change its registered pools
+                  and routers at once: a registered address is never Vaulted, and
+                  adding or removing a pool moves L for everyone.
                 </p>
               </LegalSection>
 
@@ -166,7 +171,7 @@ export default function ConsentModal({ onAccept }: Props) {
                     { head: "Smart Contract Risk", body: "Experimental; the token and the vault are not independently audited. Bugs may cause total, irrecoverable loss.", color: "text-red" },
                     { head: "Infrastructure Risk", body: "Depends on Stellar Network and Soroban VM. Outages beyond developer control.", color: "text-orange" },
                     { head: "Market & Regulatory Risk", body: "HITZ may have no value. You are solely responsible for legal compliance.", color: "text-yellow" },
-                    { head: "Upgrade & Admin Risk", body: "Both contracts can be upgraded after a public 7-day timelock; the vault's admin can list new assets the same way.", color: "text-muted" },
+                    { head: "Upgrade & Admin Risk", body: "Both contracts can be upgraded after a public 7-day timelock, and the vault's admin can list new assets the same way. Changes to the token's registered pools and routers take effect immediately. One account holds both admin roles and the treasury.", color: "text-muted" },
                   ].map(({ head, body, color }) => (
                     <div key={head} className="flex items-start gap-2">
                       <span className={`${color} shrink-0 mt-0.5`}>▸</span>

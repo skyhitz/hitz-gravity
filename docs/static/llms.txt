@@ -1,11 +1,11 @@
-# Skyhitz docs: HITZ and the Sovereign Vault
+# HITZ Protocol docs
 
-> Documentation for HITZ, a Soroban token on Stellar mainnet built on the Invariant Gravity Model, and for the Sovereign Vault, its own exchange with pools against XLM and USDC. To trade from code or an AI agent, use the keyless HTTP API or the MCP server described at https://skyhitz.io/integrate/ (project summary for language models: https://skyhitz.io/llms.txt).
+> Documentation for HITZ Protocol, an oracle-free financial primitive on Stellar mainnet (Soroban): the Sovereign Vault, HITZ's own exchange, owns its liquidity (pools against XLM and USDC, no LP shares, no withdrawals) and keeps part of every arbitrage profit as a fee, and the HITZ token bounds how much one account can hold and still move freely. To trade from code or an AI agent, use the keyless HTTP API or the MCP server described at https://skyhitz.io/integrate/ (project summary for language models: https://skyhitz.io/llms.txt).
 
 ## Docs
 
 - [Overview](https://docs.skyhitz.io/): contracts, addresses and the model in one paragraph
-- [Whitepaper](https://docs.skyhitz.io/whitepaper): the Invariant Gravity Model and the Sovereign Vault
+- [Whitepaper](https://docs.skyhitz.io/whitepaper): how HITZ Protocol provides liquidity without mercenary LPs or oracles, the vault's fee, the Event Horizon, admin powers and known limits
 - [Integrating the vault](https://docs.skyhitz.io/vault/integration): calls, errors, the fee math, events, arbitrage, calling from a contract or an account
 - [Arbitrage bot](https://docs.skyhitz.io/vault/arbitrage-bot): the vault/DEX arbitrage Skyhitz runs, and how to run your own copy
 - [Security review](https://docs.skyhitz.io/security/audit): findings and status for the token and the vault
