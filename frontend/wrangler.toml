@@ -58,6 +58,14 @@ database_name = "hitz-data"
 database_id = "4216918c-c4e0-4b49-a10e-57395e8856af"
 migrations_dir = "migrations"
 
+# The HITZ Terminal's data (functions/_lib/terminal/): read-only, from the data worker's MarketData
+# entry point, inside this Cloudflare account (no public URL). Deploy that worker first: a binding to a
+# method it does not have fails at call time.
+[[services]]
+binding = "MARKET"
+service = "stellar-kraken-arbitrage"
+entrypoint = "MarketData"
+
 # Ingestion cron (functions/_lib/ingest.ts). Soroban RPC keeps ~7 days of
 # events; every 5 minutes leaves a wide margin and keeps the price feed fresh.
 # The second schedule is the arbitrage bot (functions/_lib/arb-worker.ts),
@@ -110,3 +118,7 @@ USDC_ISSUER = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 # largest trade, default "150").
 ARB_BOT_MODE = "live"
 ARB_BOT_ADDRESS = "GDZACFEQZNHDEH4K3RQQWQNXZ5RIT4SNNJZJG6BROYNWMU567HT6BASD"
+# HITZ Terminal payments (functions/_lib/terminal/) send the HITZ they buy to the treasury: the token's
+# admin, a registered pool, unless TERMINAL_TREASURY names another registered pool. Checked on chain
+# before every checkout; payments pause if it is not a registered pool.
+# TERMINAL_TREASURY = "G..."

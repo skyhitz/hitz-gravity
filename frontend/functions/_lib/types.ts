@@ -75,6 +75,15 @@ export interface Env {
   ARB_BOT_MIN_PROFIT_XLM?: string;
   ARB_BOT_MAX_TRADE_XLM?: string;
 
+  // The HITZ Terminal (functions/_lib/terminal/). MARKET is the data worker's read-only MarketData
+  // entry point (service binding to stellar-kraken-arbitrage, wrangler.toml): every terminal answer
+  // comes from it, and nothing it returns is stored here. Its methods are called by name
+  // (functions/_lib/terminal/routes.ts, Market). Optional so a local build without it still runs.
+  MARKET?: unknown;
+  // Where terminal payments send the HITZ they buy: a registered pool. Unset: the token's admin
+  // (the treasury), checked on chain to be a registered pool before any checkout is built.
+  TERMINAL_TREASURY?: string;
+
   // Issuer of the USDC asset. Email accounts get a USDC trustline added
   // during bootstrap (and on every login, idempotent) so users can receive
   // USDC after swapping HITZ. The trustline reserve is sponsored by the

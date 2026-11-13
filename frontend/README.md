@@ -179,6 +179,54 @@ for real on testnet). `scripts/arb-replay.mjs` replays the planner on past
 SDEX prices. Strategy, numbers, limits and guards:
 [`ARB_BOT.md`](./ARB_BOT.md).
 
+### HITZ Terminal
+
+XLM market, leverage and on-chain flow data, sold by plan at
+[skyhitz.io/terminal](https://skyhitz.io/terminal/) (`app/terminal/`,
+`app/components/terminal/`) and as an API under `/api/terminal/*`
+(`functions/api/terminal.ts`, logic in `functions/_lib/terminal/`).
+
+- **Data:** read on every request from the data worker's read-only
+  `MarketData` entry point through the `MARKET` service binding
+  (`wrangler.toml`). Nothing it returns is stored here; free answers are
+  edge-cached for a minute, paid ones never.
+- **Plans** (`plans.ts`, the one table the page, the gate and checkout
+  read): Free (an hour behind), Trader $29, Pro $99 (API keys),
+  Institutional $499, per 30 days; a year costs ten periods. `gate.ts`
+  turns a plan and a query into the exact call: datasets, delay, history,
+  bins, sizes.
+- **Payment:** `POST /api/terminal/checkout` builds one vault swap selling
+  USDC or XLM for HITZ sent to the treasury (the token's admin, a
+  registered pool, checked on chain; `TERMINAL_TREASURY` overrides it).
+  `POST /api/terminal/checkout/confirm` reads the paying transaction and
+  checks what it did, so a fee bump or the email gateway's own transaction
+  pays too; a transaction pays one checkout once. Purchases are an
+  append-only ledger (`terminal_purchases`) folded into the current plan by
+  `billing.ts`; the cron confirms payments whose page was closed.
+- **Access:** wallets sign a challenge transaction that can never be
+  submitted (sequence 0, an HMAC'd nonce burnt after use); email accounts
+  use their session. API keys (`htz_…`) are shown once and stored as
+  SHA-256; a key reads data and cannot pay, make keys or change webhooks.
+- **Alerts:** the cron pushes each alert once to every paying subscriber's
+  webhooks, signed `X-Skyhitz-Signature: t=…,v1=…` (HMAC-SHA256 of
+  `t.body`) with a per-webhook secret derived from `MASTER_SECRET`.
+
+| Method | Path | What it does |
+| ------ | ---- | ------------ |
+| GET  | `/api/terminal/plans` | Plans, prices, what each sees (public) |
+| GET  | `/api/terminal/data/<dataset>` | `overview`, `spreads`, `liquidations`, `liquidation_feed`, `leverage`, `books`, `flows`, `transfers`, `sdf`, `alerts`, `labels`, `status` |
+| GET  | `/api/terminal/me` | The caller's plan, keys, webhooks, payments |
+| POST | `/api/terminal/auth/challenge`, `/auth/verify`, `/auth/logout` | Wallet sign-in |
+| POST | `/api/terminal/checkout`, `/checkout/confirm` | Pay for a plan |
+| POST | `/api/terminal/keys`, `/keys/revoke` | API keys |
+| POST | `/api/terminal/webhooks`, `/webhooks/delete`, `/webhooks/test` | Alert webhooks |
+
+Deploy the data worker first (the binding calls its methods by name), then
+`npx wrangler d1 migrations apply hitz-data --remote` (migration
+`0006_terminal.sql`), then this Worker. `tests/terminal-*.test.mjs` run
+whole requests, payments and deliveries against SQLite with the real
+migrations.
+
 ## Gateway guards
 
 The sponsor is a hot wallet behind public endpoints, so the gateway is built

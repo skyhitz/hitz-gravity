@@ -141,6 +141,9 @@ export default function Home() {
             </span>
           </div>
           <div className="nav-right">
+            <Link href="/terminal/" className="nav-link">
+              Terminal
+            </Link>
             <Link href="/integrate/" className="nav-link wide-only">
               Integrate
             </Link>
@@ -226,6 +229,7 @@ export default function Home() {
           <p className="contract">{CONTRACT_ID}</p>
           <div className="footer-links">
             <Link href="/whitepaper">Whitepaper</Link>
+            <Link href="/terminal/">Terminal</Link>
             <Link href="/integrate/">API &amp; MCP</Link>
             <a
               href="https://github.com/skyhitz/hitz-gravity"

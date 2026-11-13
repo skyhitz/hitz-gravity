@@ -175,7 +175,7 @@ function tokenInfo(env: Env, contract: string): Promise<Token> {
 /** Any well-formed account can be the source of a simulation; it needn't exist. */
 const VIEW_SOURCE = "GBZXN7PIRZGNMHGA7MUUUF4GWPY5AYPV6LY4UV2GL6VJGIQRXFDNMADI";
 
-const rpcServer = (env: Env) => new StellarSdk.rpc.Server(env.RPC_URL);
+export const rpcServer = (env: Env) => new StellarSdk.rpc.Server(env.RPC_URL);
 const addr = (a: string) => StellarSdk.Address.fromString(a).toScVal();
 const i128 = (v: bigint) => StellarSdk.nativeToScVal(v, { type: "i128" });
 
@@ -226,7 +226,7 @@ async function readVault(env: Env): Promise<VaultState> {
   return { ledger, states, pools: poolsFromStates(states, 0n), assets, hitz: hitzToken(env) };
 }
 
-async function hitzView(env: Env, method: string, account?: string): Promise<unknown> {
+export async function hitzView(env: Env, method: string, account?: string): Promise<unknown> {
   return (await view(env, env.HITZ_CONTRACT_ID, method, account ? [addr(account)] : [])).value;
 }
 
@@ -273,7 +273,7 @@ function requireAddress(input: unknown, field: string): string {
 
 // ─── USD context (from the Monitor's liquidity snapshot) ─────────────────────
 
-interface UsdPrices {
+export interface UsdPrices {
   asOf: string;
   /** USD per unit of each listed asset, by contract. */
   assets: Map<string, number>;
@@ -287,7 +287,7 @@ interface UsdPrices {
 let usdCache: { at: number; value: UsdPrices | null } | null = null;
 
 /** Best effort: the cron's last snapshot (≤ 5 minutes old), or null. */
-async function usdPrices(env: Env): Promise<UsdPrices | null> {
+export async function usdPrices(env: Env): Promise<UsdPrices | null> {
   if (usdCache && Date.now() - usdCache.at < 60_000) return usdCache.value;
   let value: UsdPrices | null = null;
   try {
@@ -911,13 +911,13 @@ export async function buildSwap(env: Env, input: SwapInput) {
 
 // ─── Submitting and following transactions ──────────────────────────────────
 
-interface VaultCall {
+export interface VaultCall {
   method: string;
   args: StellarSdk.xdr.ScVal[];
 }
 
 /** The vault call inside a single-operation transaction, if that's what it is. */
-function vaultCallOf(tx: StellarSdk.Transaction): VaultCall | null {
+export function vaultCallOf(tx: StellarSdk.Transaction): VaultCall | null {
   if (tx.operations.length !== 1) return null;
   const op = tx.operations[0];
   if (op.type !== "invokeHostFunction") return null;

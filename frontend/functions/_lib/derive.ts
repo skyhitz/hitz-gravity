@@ -102,6 +102,27 @@ export function getServerKeys(masterSecretHex: string): Promise<ServerKeys> {
   return pending;
 }
 
+// ─── The terminal's key ──────────────────────────────────────────────────
+
+const terminalCache = new Map<string, Promise<string>>();
+
+/**
+ * terminal_key = SHA-256("hitz:v1:terminal" || master), in hex: the HITZ Terminal's HMAC key for its
+ * sign-in challenges and session cookies and the root of each webhook's signing secret
+ * (functions/_lib/terminal/). A fourth independent material; the three above are unchanged.
+ */
+export function terminalSecret(masterSecretHex: string): Promise<string> {
+  const cached = terminalCache.get(masterSecretHex);
+  if (cached) return cached;
+  const pending = (async () => {
+    const master = hexToBytes(masterSecretHex);
+    if (master.length < 32) throw new Error("MASTER_SECRET must be at least 32 bytes of hex");
+    return bytesToHex(await deriveLabel(master, "hitz:v1:terminal"));
+  })();
+  terminalCache.set(masterSecretHex, pending);
+  return pending;
+}
+
 // ─── Per-user derivation ─────────────────────────────────────────────────
 
 /**
