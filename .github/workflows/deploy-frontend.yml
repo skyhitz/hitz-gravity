@@ -6,7 +6,8 @@
 #      go out before it; with nothing pending this is a no-op.
 #   3. wrangler deploy: the Worker and the static assets together.
 #
-# Needs two repository secrets (Settings, Secrets and variables, Actions):
+# Needs two secrets in the repository's "Cloudflare" environment (Settings,
+# Environments, Cloudflare):
 #   CLOUDFLARE_API_TOKEN   a token from the "Edit Cloudflare Workers" template,
 #                          with Account, D1, Edit added for the migrations
 #   CLOUDFLARE_ACCOUNT_ID  the account that owns the hitz-gravity Worker
@@ -35,6 +36,10 @@ concurrency:
 jobs:
   deploy:
     if: github.ref == 'refs/heads/main'
+    # The secrets live in the repository's "Cloudflare" environment.
+    environment:
+      name: Cloudflare
+      url: https://skyhitz.io
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
@@ -56,7 +61,7 @@ jobs:
           [ -n "$CLOUDFLARE_API_TOKEN" ] || missing="$missing CLOUDFLARE_API_TOKEN"
           [ -n "$CLOUDFLARE_ACCOUNT_ID" ] || missing="$missing CLOUDFLARE_ACCOUNT_ID"
           if [ -n "$missing" ]; then
-            echo "::error::Missing repository secrets:$missing. Add them under Settings, Secrets and variables, Actions, then run this workflow again."
+            echo "::error::Missing secrets:$missing. Add them to the Cloudflare environment (Settings, Environments), then run this workflow again."
             exit 1
           fi
 

@@ -43,7 +43,7 @@ Every push to `main` that touches `frontend/` deploys itself:
 `.github/workflows/deploy-frontend.yml` runs the tests, builds, applies
 pending D1 migrations and runs `wrangler deploy`. Start it by hand from the
 Actions tab ("Deploy frontend", Run workflow) to redeploy `main`. It needs
-two repository secrets: `CLOUDFLARE_API_TOKEN`, a token from the "Edit
+two secrets in the repository's "Cloudflare" environment: `CLOUDFLARE_API_TOKEN`, a token from the "Edit
 Cloudflare Workers" template with Account, D1, Edit added, and
 `CLOUDFLARE_ACCOUNT_ID`.
 
