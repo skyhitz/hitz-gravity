@@ -49,13 +49,21 @@ export interface Meta {
 
 export type Result<T> = { ok: true; data: T; meta: Meta } | { ok: false; status: number; code: string; error: string; upgrade?: PlanId };
 
+/** What the page says when the API is down: no answer at all, or one that isn't the API's JSON. */
+export const UNREACHABLE = "The Terminal's server can't be reached right now. Try again in a minute.";
+
 async function call<T>(path: string, init?: RequestInit): Promise<{ status: number; body: T & { error?: string; code?: string; upgrade?: PlanId } }> {
-  const res = await fetch(`/api/terminal${path}`, { credentials: "same-origin", ...init });
+  let res: Response;
+  try {
+    res = await fetch(`/api/terminal${path}`, { credentials: "same-origin", ...init });
+  } catch {
+    throw new TerminalError(0, "unreachable", UNREACHABLE);
+  }
   let body: unknown = {};
   try {
     body = await res.json();
   } catch {
-    body = { error: `HTTP ${res.status}`, code: "bad_response" };
+    body = { error: UNREACHABLE, code: "bad_response" };
   }
   return { status: res.status, body: body as T & { error?: string; code?: string; upgrade?: PlanId } };
 }
@@ -81,11 +89,20 @@ export async function data<T>(dataset: string, params: Record<string, string | n
   for (const [k, v] of Object.entries(params)) if (v !== undefined) q.set(k, String(v));
   const r = await call<{ data: T; meta: Meta }>(`/data/${dataset}${q.size ? `?${q}` : ""}`);
   if (r.status >= 400) return { ok: false, status: r.status, code: r.body.code ?? "error", error: r.body.error ?? `HTTP ${r.status}`, upgrade: r.body.upgrade };
+  // A success without the API's meta block came from something else (an error page, a proxy): treat it as down.
+  if (!r.body.meta) return { ok: false, status: 502, code: "bad_response", error: UNREACHABLE };
   return { ok: true, data: r.body.data, meta: r.body.meta };
 }
 
 export const plans = async () => (await call<{ plans: PublicPlan[] }>("/plans")).body.plans ?? [];
-export const me = async () => (await call<Me>("/me")).body;
+/** Throws unless the answer is a real caller, so an outage reads as signed out instead of breaking the page. */
+export const me = async (): Promise<Me> => {
+  const r = await call<Me>("/me");
+  if (r.status >= 400 || typeof r.body.plan_name !== "string") {
+    throw new TerminalError(r.status, r.body.code ?? "bad_response", r.body.error ?? UNREACHABLE);
+  }
+  return r.body;
+};
 export const challenge = (account: string) => post<{ xdr: string; expires_at: number; network_passphrase: string }>("/auth/challenge", { account });
 export const verify = (account: string, xdr: string) => post<{ account: string; plan: PlanId }>("/auth/verify", { account, xdr });
 export const logout = () => post<{ ok: true }>("/auth/logout", {});

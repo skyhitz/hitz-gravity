@@ -37,7 +37,7 @@ export default function Whitepaper() {
             href="/"
             className="text-muted text-sm hover:text-foreground transition-colors flex items-center gap-2"
           >
-            ← Mainnet
+            ← Home
           </Link>
           <span className="text-xs text-muted font-mono">v6.0 · 2026</span>
         </div>

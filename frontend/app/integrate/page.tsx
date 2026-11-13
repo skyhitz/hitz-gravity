@@ -96,7 +96,7 @@ export default function IntegratePage() {
       <nav className="sticky top-0 z-10 border-b border-border bg-background/80 backdrop-blur-md">
         <div className="max-w-3xl mx-auto px-6 h-12 flex items-center justify-between">
           <Link href="/" className="text-muted text-sm hover:text-foreground transition-colors flex items-center gap-2">
-            ← Mainnet
+            ← Home
           </Link>
           <div className="flex items-center gap-4 text-xs text-muted">
             <a href="#mcp" className="hover:text-foreground transition-colors">MCP</a>

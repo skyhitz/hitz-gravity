@@ -40,7 +40,7 @@ const CURL = `curl -H "Authorization: Bearer htz_YOUR_KEY" \\
 export default function TerminalApp() {
   const { publicKey, connectionType } = useWallet();
   const [me, setMe] = useState<Me | null>(null);
-  const [plans, setPlans] = useState<PublicPlan[]>([]);
+  const [plans, setPlans] = useState<PublicPlan[] | null>(null);
   const [version, setVersion] = useState(0);
   const refresh = useCallback(() => setVersion((v) => v + 1), []);
   const { signIn, busy, error } = useTerminalSignIn(refresh);
