@@ -50,8 +50,8 @@ const PLAN_NAME: Record<PlanId, string> = { free: "Free", trader: "Trader", pro:
 
 function DelayBadge({ meta }: { meta?: Meta }) {
   if (!meta) return null;
-  if (meta.delayed_by_minutes > 0) return <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange/15 text-orange font-mono">{meta.delayed_by_minutes}m DELAY</span>;
-  return <span className="text-[10px] px-1.5 py-0.5 rounded bg-green/15 text-green font-mono">LIVE</span>;
+  if (meta.delayed_by_minutes > 0) return <span className="shrink-0 whitespace-nowrap text-[10px] px-1.5 py-0.5 rounded bg-orange/15 text-orange font-mono">{meta.delayed_by_minutes}m DELAY</span>;
+  return <span className="shrink-0 whitespace-nowrap text-[10px] px-1.5 py-0.5 rounded bg-green/15 text-green font-mono">LIVE</span>;
 }
 
 export function Panel({ title, sub, meta, children, className = "" }: { title: string; sub?: string; meta?: Meta; children: ReactNode; className?: string }) {

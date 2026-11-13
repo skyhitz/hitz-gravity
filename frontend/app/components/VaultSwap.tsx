@@ -357,7 +357,7 @@ export default function VaultSwap() {
           <div className="alert info" style={{ marginBottom: 14 }}>
             <span className="icon">⬡</span>
             <div>
-              <strong>Your account is vaulted.</strong> You can still sell HITZ into the vault: it&apos;s a registered pool. Selling enough to bring
+              <strong>Your account is vaulted.</strong>{" "}You can still sell HITZ into the vault: it&apos;s a registered pool. Selling enough to bring
               your balance under the Event Horizon releases you; the Vault tab computes the amount.
             </div>
           </div>

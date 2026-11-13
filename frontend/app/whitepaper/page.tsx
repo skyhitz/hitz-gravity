@@ -109,7 +109,7 @@ export default function Whitepaper() {
           </FormulaBlock>
 
           <p>
-            where <Var>d</Var> = 7 (Stellar&apos;s standard decimal precision).
+            where <Var>d</Var>{" "}= 7 (Stellar&apos;s standard decimal precision).
             Any account whose balance exceeds <Var>L</Var> is{" "}
             <strong>vaulted</strong>: it can only send HITZ to a registered
             pool until its balance is back under <Var>L</Var>, or until the
@@ -125,8 +125,8 @@ export default function Whitepaper() {
           <table className="w-full text-sm mt-2">
             <thead>
               <tr className="text-muted border-b border-border">
-                <th className="text-left py-2 font-medium">Pool Reserves (S)</th>
-                <th className="text-left py-2 font-medium">Event Horizon (L)</th>
+                <th className="text-left py-2 pr-4 font-medium">Pool Reserves (S)</th>
+                <th className="text-left py-2 pr-4 font-medium">Event Horizon (L)</th>
                 <th className="text-left py-2 font-medium">Max single holder</th>
               </tr>
             </thead>
@@ -138,8 +138,8 @@ export default function Whitepaper() {
                 ["100,000,000 HITZ", "10,000 HITZ", "0.01%"],
               ].map(([s, l, pct]) => (
                 <tr key={s}>
-                  <td className="py-2 font-mono text-purple">{s}</td>
-                  <td className="py-2 font-mono text-accent">{l}</td>
+                  <td className="py-2 pr-4 font-mono text-purple">{s}</td>
+                  <td className="py-2 pr-4 font-mono text-accent">{l}</td>
                   <td className="py-2 text-muted">{pct}</td>
                 </tr>
               ))}
@@ -199,7 +199,7 @@ export default function Whitepaper() {
         <Section number="IV" title="Transfer Physics">
           <SubHeading>The Roach Motel (Silent Trap)</SubHeading>
           <p>
-            Incoming transfers <em>never</em> revert due to vault logic. If a
+            Incoming transfers <em>never</em>{" "}revert due to vault logic. If a
             recipient&apos;s new balance exceeds <Var>L</Var>, they are silently
             vaulted, but the transfer succeeds and returns a clean SEP-41 void.
             This is what lets an exchange pay out a swap&apos;s output without
@@ -257,7 +257,7 @@ export default function Whitepaper() {
               effect on <Var>S</Var>, nothing back.
             </li>
             <li>
-              The ecosystem grows: <Var>S</Var> increases, <Var>L</Var> rises
+              The ecosystem grows: <Var>S</Var> increases, <Var>L</Var>{" "}rises
               past the account&apos;s balance, and the next action
               auto-releases.
             </li>
@@ -283,7 +283,7 @@ export default function Whitepaper() {
             call, and never moves HITZ out of the vault.
           </p>
           <p>
-            <strong>Why HITZ needs its own.</strong> Each pool registration
+            <strong>Why HITZ needs its own.</strong>{" "}Each pool registration
             binds the pool&apos;s code. On October 2, 2026 Aquarius upgraded
             both HITZ pools, the token&apos;s integrity guard stopped trusting
             them, and trading froze. Rebinding external pools to code nobody
@@ -332,16 +332,16 @@ D   = the largest |dislocation| of A against any reference pool,
           </table>
           <ul className="list-disc list-inside space-y-1 text-muted text-sm pl-2">
             <li>
-              <strong>One asset relative to another.</strong> HITZ&apos;s own
+              <strong>One asset relative to another.</strong>{" "}HITZ&apos;s own
               price never enters D.
             </li>
             <li>
-              <strong>The worst pair.</strong> A hop pays for its asset&apos;s
+              <strong>The worst pair.</strong>{" "}A hop pays for its asset&apos;s
               most dislocated pair, so no route through a third asset and no
               split into single hops is cheaper.
             </li>
             <li>
-              <strong>References.</strong> A pool counts as a reference only if
+              <strong>References.</strong>{" "}A pool counts as a reference only if
               it holds at least 1/8 of the other pool&apos;s HITZ, so a shallow
               pool can&apos;t raise a deep one&apos;s fee.
             </li>
@@ -608,8 +608,8 @@ D   = the largest |dislocation| of A against any reference pool,
               <div className="divide-y divide-border">
                 {c.rows.map(([k, v]) => (
                   <div key={k} className="flex items-start gap-4 px-5 py-3">
-                    <span className="text-muted text-xs w-28 shrink-0 pt-0.5">{k}</span>
-                    <span className="font-mono text-xs text-foreground break-all">{v}</span>
+                    <span className="text-muted text-xs w-24 sm:w-28 shrink-0 pt-0.5">{k}</span>
+                    <span className="font-mono text-xs text-foreground wrap-anywhere">{v}</span>
                   </div>
                 ))}
               </div>

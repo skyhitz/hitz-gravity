@@ -130,15 +130,6 @@ export default function Home() {
           <div className="logo">
             <span className="logo-mark" aria-hidden />
             <h1>SKYHITZ</h1>
-            <span style={{ color: "var(--border)", userSelect: "none" }}>·</span>
-            <span
-              style={{
-                color: "var(--muted)",
-                fontSize: 12,
-              }}
-            >
-              Mainnet
-            </span>
           </div>
           <div className="nav-right">
             <Link href="/terminal/" className="nav-link">
@@ -146,9 +137,6 @@ export default function Home() {
             </Link>
             <Link href="/integrate/" className="nav-link wide-only">
               Integrate
-            </Link>
-            <Link href="/whitepaper" className="nav-link">
-              Whitepaper
             </Link>
             <WalletButton />
           </div>
@@ -226,7 +214,11 @@ export default function Home() {
       {/* ── Footer ────────────────────────────────────────────────────── */}
       <footer className="footer">
         <div className="footer-inner">
-          <p className="contract">{CONTRACT_ID}</p>
+          <p className="contract">
+            <span className="network">Mainnet</span>
+            <span className="sep" aria-hidden>·</span>
+            {CONTRACT_ID}
+          </p>
           <div className="footer-links">
             <Link href="/whitepaper">Whitepaper</Link>
             <Link href="/terminal/">Terminal</Link>
