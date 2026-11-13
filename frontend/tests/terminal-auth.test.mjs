@@ -6,6 +6,7 @@ import { Keypair, TransactionBuilder, Networks, Account, Operation } from "@stel
 import {
   buildChallenge,
   CHALLENGE_TTL_S,
+  CHALLENGE_VALUE_RE,
   COOKIE,
   identify,
   KEY_RE,
@@ -34,6 +35,8 @@ test("a challenge signed by the account's key signs it in, and can never be subm
   const tx = TransactionBuilder.fromXDR(xdr, NET);
   assert.equal(tx.sequence, "0");
   assert.equal(tx.source, user.publicKey());
+  // Hex text, never a Buffer: the Worker's SDK build rejects the runtime's Buffer in manageData.
+  assert.match(Buffer.from(tx.operations[0].value).toString("utf8"), CHALLENGE_VALUE_RE);
   const nonce = await verifyChallenge(sign(xdr, user), user.publicKey(), SECRET, master(), T0 + 1000, NET);
   assert.match(nonce, /^[0-9a-f]{32}$/);
 });

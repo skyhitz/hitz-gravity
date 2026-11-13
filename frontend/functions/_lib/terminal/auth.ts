@@ -125,13 +125,23 @@ export function requireAccount(input: unknown): string {
 const challengeMac = (secret: string, account: string, nonce: Uint8Array, maxTime: number) =>
   hmac(secret, `challenge|${account}|${hex(nonce)}|${maxTime}`).then((m) => m.slice(0, 16));
 
+const fromHex = (text: string): Uint8Array => Uint8Array.from(text.match(/../g) ?? [], (h) => parseInt(h, 16));
+
+/**
+ * The manageData value is the nonce and its MAC as 64 lowercase hex characters, a string. Never a
+ * Buffer: the Worker bundles the SDK's browser build, whose own Buffer polyfill does not recognize the
+ * runtime's Buffer (manageData throws "value must be a string, Buffer or null"), while Node's tests use
+ * the Node build, where both are the same class.
+ */
+export const CHALLENGE_VALUE_RE = /^[0-9a-f]{64}$/;
+
 export async function buildChallenge(account: string, secret: string, nowMs: number, passphrase: string): Promise<{ xdr: string; expires_at: number }> {
   const acct = requireAccount(account);
   const nonce = crypto.getRandomValues(new Uint8Array(16));
   const minTime = Math.floor(nowMs / 1000);
   const maxTime = minTime + CHALLENGE_TTL_S;
   const mac = await challengeMac(secret, acct, nonce, maxTime);
-  const value = Buffer.concat([Buffer.from(nonce), Buffer.from(mac)]);
+  const value = hex(nonce) + hex(mac);
   const tx = new TransactionBuilder(new Account(acct, "-1"), { fee: "100", networkPassphrase: passphrase, timebounds: { minTime, maxTime } })
     .addOperation(Operation.manageData({ name: CHALLENGE_NAME, value, source: acct }))
     .build();
@@ -157,10 +167,11 @@ export async function verifyChallenge(xdr: string, account: string, secret: stri
   if (tx.source !== account || tx.sequence !== "0" || tx.operations.length !== 1) throw bad("This is not the challenge for this account.");
   const op = tx.operations[0];
   if (op.type !== "manageData" || op.name !== CHALLENGE_NAME || (op.source && op.source !== account)) throw bad("This is not a terminal sign-in challenge.");
-  const value = op.value ? new Uint8Array(op.value) : new Uint8Array();
+  const text = op.value ? new TextDecoder().decode(new Uint8Array(op.value)) : "";
   const minTime = Number(tx.timeBounds?.minTime ?? 0);
   const maxTime = Number(tx.timeBounds?.maxTime ?? 0);
-  if (value.length !== 32 || maxTime - minTime !== CHALLENGE_TTL_S) throw bad("The challenge was changed.");
+  if (!CHALLENGE_VALUE_RE.test(text) || maxTime - minTime !== CHALLENGE_TTL_S) throw bad("The challenge was changed.");
+  const value = fromHex(text);
   const now = Math.floor(nowMs / 1000);
   if (now < minTime - SKEW_S || now > maxTime) throw new AuthError(401, "challenge_expired", "The challenge expired. Ask for a new one.");
   if (!sameBytes(value.slice(16), await challengeMac(secret, account, value.slice(0, 16), maxTime))) throw bad("The challenge was not issued here.");
@@ -174,8 +185,9 @@ export async function verifyChallenge(xdr: string, account: string, secret: stri
     } catch {
       continue;
     }
-    const hint = kp.signatureHint();
-    if (tx.signatures.some((sig) => Buffer.from(sig.hint()).equals(hint) && kp.verify(hash, sig.signature()))) weight += s.weight;
+    // Plain bytes on both sides: the SDK's Buffers and the runtime's are different classes in the Worker.
+    const hint = new Uint8Array(kp.signatureHint());
+    if (tx.signatures.some((sig) => sameBytes(new Uint8Array(sig.hint()), hint) && kp.verify(hash, sig.signature()))) weight += s.weight;
   }
   if (weight < Math.max(1, signers.threshold)) throw new AuthError(401, "not_signed", "The challenge is not signed by this account's key.");
   return hex(value.slice(0, 16));
