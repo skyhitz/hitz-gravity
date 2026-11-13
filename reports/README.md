@@ -10,7 +10,7 @@ On-chain activity reports for the HITZ contract
 | `YYYY-MM.md` | Auto-generated monthly report (cron) |
 | `launch-window-*.md` | One-off backfilled launch analysis |
 
-The event data behind the reports is **not** in this repo anymore — it
+The event data behind the reports is **not** in this repo anymore: it
 lives in Cloudflare D1. (Until September 2026 it was an append-only
 `data/events.jsonl` plus `tx-info.json` / `contract-info.json` caches,
 committed daily; those files were imported into D1 and removed. They
@@ -22,10 +22,11 @@ remain in git history.)
 Soroban RPC ──getEvents──▶ Worker cron (every 5 min) ──▶ D1 `hitz-data` ──▶ /api/data/* ──▶ contract-report.mjs ──▶ reports/YYYY-MM.md
 Horizon ──enrichment──┘                                      │
 Vault events (Soroban RPC) + Horizon XLM/USD ────────────────┼──▶ /api/price/history, /api/liquidity (Monitor tab)
-Holder index (`holders`) + ledger balances ──────────────────┴──▶ /api/holders, /api/traction (Monitor tab)
+Holder index (`holders`) + ledger balances ──────────────────┼──▶ /api/holders, /api/traction (Monitor tab)
+Arbitrage bot cron (its log, `arb_runs`) ────────────────────┴──▶ /api/v1/bot, /api/data/arb-runs
 ```
 
-- **Ingestion** — `frontend/functions/_lib/ingest.ts`, run by the Worker's
+- **Ingestion:** `frontend/functions/_lib/ingest.ts`, run by the Worker's
   Cron Trigger every 5 minutes (`frontend/wrangler.toml`). It pulls new
   contract events (`transfer`, `vaulted`, `pool_registered`, …) from Soroban
   RPC, and enriches them the way the report generator used to on demand:
@@ -37,7 +38,7 @@ Holder index (`holders`) + ledger balances ────────────�
   HITZ/USD price history and the liquidity snapshot used by the Monitor
   tab, from the Sovereign Vault's `seeded` / `hop` / `deposit` events (from
   the Aquarius pools' `update_reserves` events before Nov 4, 2026).
-- **Holder index** — our own, in D1 `holders`: every address in a stored
+- **Holder index:** our own, in D1 `holders`: every address in a stored
   `transfer` / `mint` / `burn` / `vaulted` event (the v1 `*_event` names and
   the SEP-41 names are stored alike), kept current by the cron, plus the
   holders older than the event store (it starts May 11, 2026; HITZ started
@@ -45,19 +46,34 @@ Holder index (`holders`) + ledger balances ────────────�
   migration. Balances are always read from the ledger, never summed from
   events, and the traction snapshot reports `unindexed`: total supply minus
   every indexed balance, zero when the index is complete.
-- **Storage** — D1 database `hitz-data`, schema in
+- **Storage:** D1 database `hitz-data`, schema in
   `frontend/migrations/`. `hitz_events` rows are exactly the old JSONL rows.
-- **Read API** — `frontend/functions/api/data.ts`, public and edge-cached
+- **Read API:** `frontend/functions/api/data.ts`, public and edge-cached
   (it's all public chain data):
   - `GET /api/data/events?after=<id>&limit=<≤1000>`
   - `GET /api/data/tx-info?after=<hash>&limit=<≤2000>`
   - `GET /api/data/contract-info`
-  - `GET /api/data/status` — ingestion health
-- **Reports** — `frontend/scripts/contract-report.mjs generate` reads the
+  - `GET /api/data/status`: ingestion health
+  - `GET /api/data/pool-reserves?pool=<key>&after=<eventId>&limit=<≤2000>`:
+    one pool's reserves after each of its events. A Sovereign Vault pool is
+    `<vault>:<asset contract>`; its points cover every seed, deposit and
+    swap, including swaps between two assets, which move no HITZ.
+  - `GET /api/data/arb-runs?after=<id>&limit=<≤1000>`: the arbitrage bot's
+    live actions (its account and trades are public; dry runs are left out).
+- **Reports:** `frontend/scripts/contract-report.mjs generate` reads the
   store through the read API and renders markdown. No credentials needed.
+  A report covers the HITZ events (transfers, vault flags, registry and
+  upgrade events), the Sovereign Vault (its pools at the start and end of
+  the month, seeds, deposits, swaps and the fees they left, recovered
+  exactly from the reserve points by `frontend/scripts/report-vault.mjs`)
+  and the arbitrage bot's round trips. Each HITZ transfer to or from the
+  vault is matched to the vault event behind it (same ledger time, same
+  amount), so a purchase, a sale, a deposit and a sacrifice read apart.
+  Against a deployment without the vault or bot routes, those sections are
+  left out with a note.
 
 > **Pagination note:** `getEvents` scans in bounded ledger chunks. A
-> short or empty page does NOT mean "done" — only the cursor reaching
+> short or empty page does NOT mean "done": only the cursor reaching
 > `latestLedger` does. The cron pages on that condition; do not
 > "optimise" it back to a page-size check or it silently truncates.
 
@@ -81,8 +97,8 @@ REPORTS_API_BASE=http://localhost:8787 node scripts/contract-report.mjs generate
   from the API and commits it.
 - [`.github/workflows/data-health.yml`](../.github/workflows/data-health.yml)
   runs **every day** and fails (GitHub emails the owners) if event
-  ingestion or the price feed hasn't moved in 2 hours — a stalled cron
-  would otherwise lose history once RPC retention rolls past it.
+  ingestion or the price feed hasn't moved in 2 hours (a stalled cron
+  would otherwise lose history once RPC retention rolls past it).
 
 ## Setup / recovery
 

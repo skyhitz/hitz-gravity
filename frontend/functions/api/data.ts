@@ -12,9 +12,18 @@
 //     → { [address]: info }
 //   GET /api/data/status
 //     → ingestion health: latest event, cursor freshness, row counts
+//   GET /api/data/pool-reserves?pool=<key>&after=<eventId>&limit=<≤2000>
+//     → { pool, points: [{eventId, ts, hitz, quote}], next }
+//     One pool's reserves after each of its events. A Sovereign Vault pool is
+//     `<vault>:<asset contract>`; its points cover every seed, deposit and
+//     swap, including XLM ↔ USDC swaps that never move HITZ.
+//   GET /api/data/arb-runs?after=<id>&limit=<≤1000>
+//     → { runs: [{id, at, action, sell, amount_in, …}], next }
+//     The arbitrage bot's live actions (its account and trades are public).
 
 import { cachedJson } from "../_lib/cache";
 import { badRequest } from "../_lib/http";
+import { arbRunsPage, poolReservesPage } from "../_lib/report-data";
 import type { Env } from "../_lib/types";
 
 function pageParams(request: Request, max: number): { after: string; limit: number } | null {
@@ -84,6 +93,34 @@ export async function GET_CONTRACT_INFO(request: Request, env: Env, ctx: Executi
       return out;
     },
     300
+  );
+}
+
+export async function GET_POOL_RESERVES(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  const page = pageParams(request, 2000);
+  if (!page) return badRequest("limit must be 1..2000");
+  const pool = new URL(request.url).searchParams.get("pool") ?? "";
+  if (!pool || pool.length > 120) return badRequest("pool required: an AMM pool address or <vault>:<asset contract>");
+  return cachedJson(
+    request,
+    ctx,
+    () => poolReservesPage(env.DB, pool, page.after, page.limit),
+    // Full pages sit behind the tip and never change.
+    (body) => (body.next ? 3600 : 60)
+  );
+}
+
+export async function GET_ARB_RUNS(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  const url = new URL(request.url);
+  const limit = Number(url.searchParams.get("limit") ?? 1000);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 1000) return badRequest("limit must be 1..1000");
+  const after = Number(url.searchParams.get("after") || 0);
+  if (!Number.isInteger(after) || after < 0) return badRequest("after must be a run id");
+  return cachedJson(
+    request,
+    ctx,
+    () => arbRunsPage(env.DB, after, limit),
+    (body) => (body.next ? 3600 : 60)
   );
 }
 
