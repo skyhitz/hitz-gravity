@@ -66,6 +66,32 @@ binding = "MARKET"
 service = "stellar-kraken-arbitrage"
 entrypoint = "MarketData"
 
+# Edge rate limiters (functions/_lib/guard.ts, applied in functions/worker.ts
+# to everything the Worker handles). Counted per caller address and per
+# Cloudflare location, approximately: a cheap first line that turns floods
+# away before they reach D1, the Stellar RPC or the mailer. The exact limits
+# on what costs money stay in D1 (functions/_lib/limits.ts).
+#   RL_ANY     every request to /api/* and /mcp
+#   RL_COSTLY  requests that write, send or sign: every POST, and the
+#              gateway's own routes (/api/auth, /api/gateway, /api/admin)
+# `period` is 10 or 60 seconds; `namespace_id` is any integer unique in the
+# account. Needs wrangler 4.36 or later.
+[[ratelimits]]
+name = "RL_ANY"
+namespace_id = "416001"
+
+  [ratelimits.simple]
+  limit = 300
+  period = 60
+
+[[ratelimits]]
+name = "RL_COSTLY"
+namespace_id = "416002"
+
+  [ratelimits.simple]
+  limit = 60
+  period = 60
+
 # Ingestion cron (functions/_lib/ingest.ts). Soroban RPC keeps ~7 days of
 # events; every 5 minutes leaves a wide margin and keeps the price feed fresh.
 # The second schedule is the arbitrage bot (functions/_lib/arb-worker.ts),

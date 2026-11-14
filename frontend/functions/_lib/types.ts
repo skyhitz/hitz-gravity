@@ -6,6 +6,8 @@
 // drift between handlers — if you add a binding or secret, add it here
 // and every handler gets proper types.
 
+import type { RateLimiter } from "./guard";
+
 export interface Env {
   // Static assets binding — the [assets] block in wrangler.toml points at
   // out/. We delegate non-/api/* requests to this so the Worker only
@@ -18,6 +20,13 @@ export interface Env {
   // D1 `hitz-data` — on-chain event store, report caches and price
   // history (schema in migrations/). Written by the cron in _lib/ingest.ts.
   DB: D1Database;
+
+  // Edge rate limiters (wrangler.toml [[ratelimits]], _lib/guard.ts): per
+  // caller address and per Cloudflare location. RL_ANY counts every request
+  // the Worker handles, RL_COSTLY the ones that write, send or sign. Optional
+  // so a local build without them still runs.
+  RL_ANY?: RateLimiter;
+  RL_COSTLY?: RateLimiter;
 
   // Native Cloudflare `send_email` binding. Configured in wrangler.toml
   // with no destination restrictions (we mail arbitrary user-provided

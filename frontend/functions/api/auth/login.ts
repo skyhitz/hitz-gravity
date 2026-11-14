@@ -18,6 +18,7 @@ import { isValidEmail, renderMagicLinkEmail, sendMail } from "../../_lib/email";
 import { badRequest, clientIp, json, readJson, serverError, tooManyRequests } from "../../_lib/http";
 import { emailDigest, normalizeEmail } from "../../_lib/derive";
 import { loginLimits } from "../../_lib/limits";
+import { newMagicToken } from "../../_lib/magic-token";
 import { hit } from "../../_lib/rate-limit";
 import type { Env } from "../../_lib/types";
 
@@ -27,13 +28,6 @@ const TOKEN_TTL_SECONDS = 10 * 60;
 
 interface Body {
   email?: string;
-}
-
-function randomToken(): string {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  // hex — URL-safe, no padding worries
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 export async function POST(request: Request, env: Env): Promise<Response> {
@@ -47,7 +41,7 @@ export async function POST(request: Request, env: Env): Promise<Response> {
   const verdict = await hit(env.DB, loginLimits(clientIp(request), await emailDigest(email)));
   if (!verdict.ok) return tooManyRequests(verdict.retryAfter);
 
-  const token = randomToken();
+  const token = newMagicToken();
   await env.MAGIC_LINKS.put(
     token,
     JSON.stringify({ email, createdAt: Date.now() }),

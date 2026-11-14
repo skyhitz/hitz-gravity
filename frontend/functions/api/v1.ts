@@ -14,6 +14,7 @@
 // Errors are {error, code, …details} with a matching HTTP status.
 
 import { botStatus } from "../_lib/arb-worker";
+import { BodyTooLarge, cacheKey, readText } from "../_lib/guard";
 import { openapi } from "../_lib/openapi";
 import {
   ApiError,
@@ -45,13 +46,15 @@ export function failure(err: unknown): Response {
   if (err instanceof ApiError) {
     return respond({ error: err.message, code: err.code, ...(err.details ?? {}) }, err.status);
   }
+  if (err instanceof BodyTooLarge) return respond({ error: "The request body is too large.", code: "body_too_large" }, 413);
+  // The cause goes to the Worker's log; callers get nothing of its internals.
   console.error("[api/v1]", err);
-  return respond({ error: err instanceof Error ? err.message : String(err), code: "internal_error" }, 500);
+  return respond({ error: "Something went wrong on our side. Try again shortly.", code: "internal_error" }, 500);
 }
 
 /** JSON (or form-encoded) request body as an object. */
 async function readBody(request: Request): Promise<Record<string, unknown>> {
-  const text = await request.text();
+  const text = await readText(request);
   if (!text.trim()) return {};
   if ((request.headers.get("Content-Type") ?? "").includes("application/x-www-form-urlencoded")) {
     return Object.fromEntries(new URLSearchParams(text));
@@ -79,10 +82,20 @@ const route =
     }
   };
 
-/** Successful answers are shared through the colo's cache for `ttl` seconds. */
-async function cached(request: Request, ctx: ExecutionContext, ttl: number, produce: () => Promise<unknown>): Promise<Response> {
+/**
+ * Successful answers are shared through the colo's cache for `ttl` seconds,
+ * keyed by the path and the query parameters named in `params` (the ones the
+ * route reads), whatever else the URL carries.
+ */
+async function cached(
+  request: Request,
+  ctx: ExecutionContext,
+  ttl: number,
+  produce: () => Promise<unknown>,
+  params: readonly string[] = []
+): Promise<Response> {
   const cache = caches.default;
-  const key = new Request(request.url);
+  const key = new Request(cacheKey(request.url, params));
   const hit = await cache.match(key);
   if (hit) return hit;
   const response = respond(await produce(), 200, { "Cache-Control": `public, max-age=${ttl}` });
@@ -111,7 +124,10 @@ export const GET_INDEX = route(async (_request, env) =>
 
 export const GET_VAULT = route(async (request, env, ctx) => cached(request, ctx, 10, () => vaultInfo(env)));
 
-export const GET_QUOTE = route(async (request, env, ctx) => cached(request, ctx, 5, () => quote(env, query(request))));
+/** Every field of QuoteInput (vault-api.ts): what a quote depends on. */
+const QUOTE_PARAMS = ["sell", "buy", "amount", "buy_amount", "account"] as const;
+
+export const GET_QUOTE = route(async (request, env, ctx) => cached(request, ctx, 5, () => quote(env, query(request)), QUOTE_PARAMS));
 
 export const POST_SWAP = route(async (request, env) => respond(await buildSwap(env, await readBody(request))));
 

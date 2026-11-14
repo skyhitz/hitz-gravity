@@ -6,10 +6,14 @@
 //
 // Keeping the router as a plain object lookup — one line per endpoint,
 // O(1) dispatch, trivial to scan. No framework needed.
+//
+// Around the table, for every request alike (_lib/guard.ts): the edge rate
+// limiters, a cap on the request body, security headers on the answer, and a
+// plain 500 for anything a handler didn't catch.
 
 import { POST as authLogin } from "./api/auth/login";
 import { POST as authLogout } from "./api/auth/logout";
-import { GET as authMe } from "./api/auth/me";
+import { GET as authMe, GET_SESSION as authSession } from "./api/auth/me";
 import { GET as authVerify } from "./api/auth/verify";
 import { POST as adminLegacyReparation } from "./api/admin/legacy-reparation";
 import { GET as gatewayBalances } from "./api/gateway/balances";
@@ -26,6 +30,8 @@ import * as terminal from "./api/terminal";
 import { runIngest } from "./_lib/ingest";
 import { runArbBot } from "./_lib/arb-worker";
 import { runAdminJob, watchSponsor } from "./_lib/sponsor-ops";
+import { declaresOversizeBody, secured, withinEdgeLimits } from "./_lib/guard";
+import { clientIp } from "./_lib/http";
 
 /** The arbitrage bot's cron (wrangler.toml), offset from ingestion's "*\/5 * * * *". */
 const ARB_CRON = "2-59/5 * * * *";
@@ -42,6 +48,7 @@ const ROUTES: Record<string, Handler> = {
   "POST /api/auth/login": authLogin,
   "POST /api/auth/logout": authLogout,
   "GET /api/auth/me": authMe,
+  "GET /api/auth/session": authSession,
   "GET /api/auth/verify": authVerify,
   "POST /api/admin/legacy-reparation": adminLegacyReparation,
   "GET /api/gateway/balances": gatewayBalances,
@@ -76,6 +83,39 @@ const ROUTES: Record<string, Handler> = {
   "OPTIONS /mcp": mcp.OPTIONS,
 };
 
+/**
+ * Everything but the gateway's own routes is public data or a public API that
+ * any origin may call from a browser: its refusals carry CORS too, so the
+ * caller can read them. They hold a message and a code, nothing else.
+ */
+const isPublicApi = (pathname: string) =>
+  !(pathname.startsWith("/api/auth/") || pathname.startsWith("/api/gateway/") || pathname.startsWith("/api/admin/"));
+
+function refuse(status: number, error: string, code: string, pathname: string, headers: Record<string, string> = {}): Response {
+  return new Response(JSON.stringify({ error, code }), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+      ...(isPublicApi(pathname) ? { "Access-Control-Allow-Origin": "*" } : {}),
+      ...headers,
+    },
+  });
+}
+
+async function dispatch(request: Request, env: Env, ctx: ExecutionContext, url: URL): Promise<Response> {
+  // The HITZ Terminal has its own router (api/terminal.ts, _lib/terminal/routes.ts).
+  if (url.pathname.startsWith("/api/terminal/")) return terminal.handle(request, env, ctx);
+
+  const handler = ROUTES[`${request.method} ${url.pathname}`];
+  // The public API answers browsers from any origin: preflights and 404s carry CORS.
+  if (url.pathname === "/api/v1" || url.pathname.startsWith("/api/v1/")) {
+    if (request.method === "OPTIONS") return v1.OPTIONS();
+    if (!handler) return v1.notFound();
+  }
+  if (!handler) return refuse(404, "not found", "not_found", url.pathname);
+  return handler(request, env, ctx);
+}
+
 export default {
   async fetch(
     request: Request,
@@ -92,22 +132,24 @@ export default {
       return env.ASSETS.fetch(request);
     }
 
-    // The HITZ Terminal has its own router (api/terminal.ts, _lib/terminal/routes.ts).
-    if (url.pathname.startsWith("/api/terminal/")) return terminal.handle(request, env, ctx);
+    // Preflights are answered without counting: a browser sends them on its own.
+    if (request.method !== "OPTIONS") {
+      const within = await withinEdgeLimits({ any: env.RL_ANY, costly: env.RL_COSTLY }, clientIp(request), request.method, url.pathname);
+      if (!within) {
+        return secured(refuse(429, "Too many requests. Slow down and try again in a minute.", "rate_limited", url.pathname, { "Retry-After": "60" }));
+      }
+    }
+    if (declaresOversizeBody(request)) {
+      return secured(refuse(413, "The request body is too large.", "body_too_large", url.pathname));
+    }
 
-    const handler = ROUTES[`${request.method} ${url.pathname}`];
-    // The public API answers browsers from any origin: preflights and 404s carry CORS.
-    if (url.pathname === "/api/v1" || url.pathname.startsWith("/api/v1/")) {
-      if (request.method === "OPTIONS") return v1.OPTIONS();
-      if (!handler) return v1.notFound();
+    try {
+      return secured(await dispatch(request, env, ctx, url));
+    } catch (err) {
+      // The cause goes to the Worker's log; the caller gets nothing of its internals.
+      console.error("[worker]", request.method, url.pathname, err instanceof Error ? (err.stack ?? err.message) : String(err));
+      return secured(refuse(500, "Something went wrong on our side. Try again shortly.", "internal_error", url.pathname));
     }
-    if (!handler) {
-      return new Response(JSON.stringify({ error: "not found" }), {
-        status: 404,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-    return handler(request, env, ctx);
   },
 
   // Cron Triggers (wrangler.toml [triggers]): on-chain data ingestion with

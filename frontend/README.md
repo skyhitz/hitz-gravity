@@ -137,6 +137,7 @@ no destination restrictions so the gateway can mail arbitrary recipients
 | POST   | `/api/auth/login`          | Email a single-use magic-link token                |
 | GET    | `/api/auth/verify`         | Consume token → set session cookie                 |
 | GET    | `/api/auth/me`             | Current session ( 401 if none )                    |
+| GET    | `/api/auth/session`        | Current session, 200 with nulls if none (the app)  |
 | POST   | `/api/auth/logout`         | Clear session cookie                               |
 | POST   | `/api/gateway/resolve`     | email → derived Stellar address ( lookup only )    |
 | POST   | `/api/gateway/execute`     | Fee-bumped transfer or vault swap ( session req. ) |

@@ -24,6 +24,7 @@ import { gate } from "./gate.ts";
 import { LICENSE, PLANS, publicPlans, type Plan } from "./plans.ts";
 import { activeKeyCount, deleteWebhook, getWebhook, insertKey, insertWebhook, keyAccount, listCheckouts, listKeys, listWebhooks, planOf, revokeKey } from "./store.ts";
 import { ALERT_KINDS, bodyFor, checkWebhookUrl, FORMATS, sampleAlert, signatureHeader, webhookSecret, type Send } from "./webhooks.ts";
+import { BodyTooLarge, readText } from "../guard.ts";
 import { callerBucket, hit, type Limit } from "../rate-limit.ts";
 
 /** The data worker's MarketData entry point, as the MARKET service binding exposes it. */
@@ -81,9 +82,10 @@ const fail = (status: number, code: string, error: string, extra: Record<string,
 async function body(request: Request): Promise<Record<string, unknown>> {
   if (!(request.headers.get("Content-Type") ?? "").includes("application/json")) throw new HttpError(415, "json_required", "Send a JSON body (Content-Type: application/json).");
   try {
-    const b: unknown = await request.json();
+    const b: unknown = JSON.parse(await readText(request));
     if (b && typeof b === "object" && !Array.isArray(b)) return b as Record<string, unknown>;
-  } catch {
+  } catch (err) {
+    if (err instanceof BodyTooLarge) throw new HttpError(413, "body_too_large", "The request body is too large.");
     // fall through
   }
   throw new HttpError(400, "invalid_body", "Send a JSON object.");

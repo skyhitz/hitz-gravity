@@ -2,7 +2,9 @@
 //
 // Second leg of the magic-link flow. The token came from the email body
 // and is single-use: we DELETE it from KV the moment we look it up, so
-// replaying a leaked link is impossible.
+// replaying a leaked link is impossible. Only a value with a token's form
+// reaches KV at all (_lib/magic-token.ts): the namespace holds other
+// records too, and this endpoint must not be a way to read or remove them.
 //
 // On success:
 //   - Derive the user's Stellar keypair from email + MASTER_SEED.
@@ -28,14 +30,10 @@
 import { deriveKeypair, getServerKeys } from "../../_lib/derive";
 import { json, unauthorized } from "../../_lib/http";
 import { signSession } from "../../_lib/jwt";
+import { redeemMagicToken } from "../../_lib/magic-token";
 import { redeemPendingReparation, type RedeemResult } from "../../_lib/reparation";
 import { SESSION_TTL_SECONDS, serializeSessionCookie } from "../../_lib/session";
 import type { Env, Session } from "../../_lib/types";
-
-interface TokenRecord {
-  email: string;
-  createdAt: number;
-}
 
 export async function GET(
   request: Request,
@@ -46,17 +44,9 @@ export async function GET(
   const token = url.searchParams.get("token");
   if (!token) return unauthorized("missing token");
 
-  const raw = await env.MAGIC_LINKS.get(token);
-  if (!raw) return unauthorized("link expired or already used");
-  // Single-use: remove immediately so a double-click can't reuse it.
-  await env.MAGIC_LINKS.delete(token);
-
-  let record: TokenRecord;
-  try {
-    record = JSON.parse(raw);
-  } catch {
-    return unauthorized("corrupt token record");
-  }
+  // Single-use: redeeming removes the token, so a double-click can't reuse it.
+  const record = await redeemMagicToken(env.MAGIC_LINKS, token);
+  if (!record) return unauthorized("link expired or already used");
 
   const userKp = await deriveKeypair(record.email, env.MASTER_SECRET);
   const publicKey = userKp.publicKey();

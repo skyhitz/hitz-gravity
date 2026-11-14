@@ -28,6 +28,8 @@ import {
 } from "../../_lib/email";
 import { badRequest, json, readJson, serverError } from "../../_lib/http";
 import { normalizeEmail } from "../../_lib/derive";
+import { secretsEqual } from "../../_lib/guard";
+import { newMagicToken } from "../../_lib/magic-token";
 import { putPendingReparation } from "../../_lib/reparation";
 import type { Env } from "../../_lib/types";
 
@@ -40,17 +42,14 @@ interface Body {
 // 30 days is long enough for an inbox campaign while still expiring old links.
 const LEGACY_CLAIM_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 
-function randomToken(): string {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-function isAuthorized(request: Request, env: Env): boolean {
+/** Open only to the campaign's bearer token, and to nobody while that secret isn't set. */
+async function isAuthorized(request: Request, env: Env): Promise<boolean> {
   const authHeader = request.headers.get("Authorization");
   if (!authHeader?.startsWith("Bearer ")) return false;
   const token = authHeader.slice("Bearer ".length).trim();
-  return token.length > 0 && token === env.LEGACY_REPARATION_TOKEN;
+  const expected = env.LEGACY_REPARATION_TOKEN;
+  if (!token || typeof expected !== "string" || !expected) return false;
+  return secretsEqual(token, expected);
 }
 
 // Decimal string with up to 7 fractional digits (HITZ uses 7 decimals,
@@ -68,7 +67,7 @@ function normalizeAmount(raw: string | number | undefined): string | null {
 }
 
 export async function POST(request: Request, env: Env): Promise<Response> {
-  if (!isAuthorized(request, env)) {
+  if (!(await isAuthorized(request, env))) {
     return new Response(JSON.stringify({ error: "unauthorized" }), {
       status: 401,
       headers: { "Content-Type": "application/json" },
@@ -99,7 +98,7 @@ export async function POST(request: Request, env: Env): Promise<Response> {
     xlmAmount = normalized;
   }
 
-  const token = randomToken();
+  const token = newMagicToken();
   await env.MAGIC_LINKS.put(
     token,
     JSON.stringify({ email, createdAt: Date.now() }),

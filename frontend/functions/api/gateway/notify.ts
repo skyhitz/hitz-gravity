@@ -26,6 +26,7 @@ import { gatewayPolicy } from "../../_lib/gateway-policy";
 import { badRequest, clientIp, json, readJson, serverError, tooManyRequests } from "../../_lib/http";
 import { deriveAddress, emailDigest, normalizeEmail } from "../../_lib/derive";
 import { notifyCallerLimits, notifyTransferLimits } from "../../_lib/limits";
+import { newMagicToken } from "../../_lib/magic-token";
 import { hit } from "../../_lib/rate-limit";
 import { readSession } from "../../_lib/session";
 import { VAULT_ID } from "../../_lib/vault-api";
@@ -42,12 +43,6 @@ interface Body {
 const CLAIM_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60;
 /** A transfer is announced within the hour it landed, or not at all. */
 const MAX_AGE_SECONDS = 60 * 60;
-
-function randomToken(): string {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-}
 
 /** Raw 7-decimal units → "12.5". */
 function displayAmount(raw: bigint): string {
@@ -139,7 +134,7 @@ export async function POST(request: Request, env: Env): Promise<Response> {
   // Mint a single-use login token so the claim link also signs the
   // recipient in. Same KV record shape as /api/auth/login — the existing
   // /api/auth/verify handler consumes it transparently.
-  const token = randomToken();
+  const token = newMagicToken();
   await env.MAGIC_LINKS.put(
     token,
     JSON.stringify({ email, createdAt: Date.now() }),

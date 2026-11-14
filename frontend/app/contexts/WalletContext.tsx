@@ -201,7 +201,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   // ── Init: runs once after hydration, client-only ──────────────────────────
   // Two independent restores:
   //   (a) wallet session — from SWK's persisted storage
-  //   (b) email session — from our HttpOnly cookie, read via /api/auth/me
+  //   (b) email session — from our HttpOnly cookie, read via /api/auth/session
   // Whichever resolves first wins; the other is a no-op if a mode is set.
   useEffect(() => {
     let cancelled = false;
