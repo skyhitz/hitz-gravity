@@ -93,6 +93,14 @@ export default function TerminalApp() {
       </nav>
 
       <main className="max-w-[1400px] mx-auto px-4 py-6 space-y-6">
+        <header className="space-y-1">
+          <h1 className="text-lg font-semibold tracking-tight">HITZ Terminal: live XLM market, leverage and on-chain flow data</h1>
+          <p className="text-xs text-muted max-w-3xl leading-relaxed">
+            The Stellar DEX against Kraken and Coinbase, liquidations across every XLM perpetual, order books, labeled whale and exchange flows, and
+            SDF supply. Free an hour behind. Paid plans are live, with alerts to your webhooks and, from Pro, an API.
+          </p>
+        </header>
+
         <OverviewStrip version={version} fast={paid} />
 
         <div className="grid gap-3 lg:grid-cols-3">

@@ -1,0 +1,82 @@
+# Response headers for the static site: every page, script, style and file
+# Cloudflare serves from out/. (Format and limits:
+# https://developers.cloudflare.com/workers/static-assets/headers/)
+#
+# Not applied to /api/* and /mcp: the Worker answers those and sets its own
+# headers (functions/_lib/guard.ts).
+#
+# tests/headers.test.mjs keeps this file honest: the policy must name the RPC
+# endpoint the app reads from, and must never allow framing or eval.
+
+# ─── Every page and file ─────────────────────────────────────────────────────
+#
+# Content-Security-Policy, one directive at a time:
+#   default-src      nothing loads from anywhere but this site unless named below
+#   script-src       this site's own scripts, and Cloudflare Web Analytics' beacon.
+#                    'unsafe-inline' because a static Next.js page carries its
+#                    data in inline scripts that differ per page and build, and
+#                    Cloudflare adds inline scripts of its own. No eval.
+#   style-src        components set inline styles; the wallet kit injects its own
+#   img-src          wallet logos come from the wallets' own sites
+#   connect-src      what the page's code may call: this site's API, the Soroban
+#                    RPC it reads the chain from, Horizon, and the analytics
+#                    beacon. Adding an endpoint to the app means adding it here.
+#   frame-src        Albedo signs through a frame on albedo.link
+#   frame-ancestors  no site may put these pages in a frame: a click on a swap
+#                    must be a click the visitor meant (clickjacking)
+#   object-src, base-uri, form-action   no plugins, no <base> hijack, forms post here only
+#
+# Cross-Origin-Opener-Policy keeps popups this site opens (Albedo, xBull sign
+# in a popup and answer through window.opener) while cutting the tie to any
+# other site that opens this one.
+#
+# HSTS names this host only. includeSubDomains and preload are a decision
+# about every name under skyhitz.io, taken in the Cloudflare dashboard.
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://soroban-rpc.mainnet.stellar.gateway.fm https://horizon.stellar.org https://cloudflareinsights.com; frame-src 'self' https://albedo.link; worker-src 'self' blob:; manifest-src 'self'; media-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Strict-Transport-Security: max-age=31536000
+  Cross-Origin-Opener-Policy: same-origin-allow-popups
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), accelerometer=(), gyroscope=(), magnetometer=(), midi=(), display-capture=(), browsing-topics=()
+
+# ─── Fingerprinted build output ──────────────────────────────────────────────
+#
+# Every file under /_next/static/ has a hash of its contents in its name, so a
+# new build means new names and an old name never changes: browsers may keep
+# them for a year and never ask again. Without this they revalidate every
+# script, style and font on every visit.
+/_next/static/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# ─── Images with stable names ────────────────────────────────────────────────
+#
+# Link previews and wallet listings fetch these often; a day is long enough to
+# matter and short enough that a new image shows up.
+/og.png
+  Cache-Control: public, max-age=86400
+/icon.png
+  Cache-Control: public, max-age=86400
+/icon-128.png
+  Cache-Control: public, max-age=86400
+/favicon.ico
+  Cache-Control: public, max-age=86400
+
+# ─── Files for crawlers and agents ───────────────────────────────────────────
+#
+# Plain text with an explicit charset, so "√" and "→" read correctly whatever
+# fetches them, and readable from any origin, so a tool running in a browser
+# can fetch them too. (stellar.toml already gets its CORS header from a rule
+# in the Cloudflare dashboard; naming it here as well would send it twice.)
+/llms.txt
+  Content-Type: text/plain; charset=utf-8
+  Access-Control-Allow-Origin: *
+/robots.txt
+  Content-Type: text/plain; charset=utf-8
+  Access-Control-Allow-Origin: *
+/sitemap.xml
+  Access-Control-Allow-Origin: *
+/.well-known/security.txt
+  Content-Type: text/plain; charset=utf-8
+  Access-Control-Allow-Origin: *

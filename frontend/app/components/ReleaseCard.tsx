@@ -119,7 +119,7 @@ export default function ReleaseCard() {
     if (!publicKey || !asset || confirmedOut === null || amountStroops <= 0n) return;
     setTx({ status: "signing" });
     try {
-      const call = swapCall({
+      const call = await swapCall({
         account: publicKey,
         tokenIn: HITZ_ADDRESS,
         tokenOut: asset,

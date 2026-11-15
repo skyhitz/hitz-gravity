@@ -9,7 +9,7 @@
 // discriminated-union result so call sites can pattern-match instead of
 // wrapping every call in try/catch.
 
-import * as StellarSdk from "@stellar/stellar-sdk";
+import type * as StellarSdk from "@stellar/stellar-sdk";
 
 // ─── Shared email predicate ──────────────────────────────────────────────
 // Mirrors the server-side check in functions/_lib/email.ts. Not a full

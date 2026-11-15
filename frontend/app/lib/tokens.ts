@@ -7,8 +7,8 @@
  * keep the code, and the native one ("native") shows as XLM.
  */
 
-import * as StellarSdk from "@stellar/stellar-sdk";
 import { CONTRACT_ID, simulate } from "./stellar";
+import { loadSdk } from "./sdk";
 
 export const HITZ_ADDRESS = CONTRACT_ID;
 /** Stellar asset contract of native XLM on mainnet. */
@@ -54,10 +54,10 @@ export function getTokenInfo(address: string): Promise<TokenInfo | null> {
   if (!p) {
     p = (async () => {
       try {
-        const [sym, dec] = await Promise.all([simulate(address, "symbol"), simulate(address, "decimals")]);
-        const raw = String(StellarSdk.scValToNative(sym));
+        const [sdk, sym, dec] = await Promise.all([loadSdk(), simulate(address, "symbol"), simulate(address, "decimals")]);
+        const raw = String(sdk.scValToNative(sym));
         const code = raw.split(":")[0].trim() || raw;
-        const decimals = Number(StellarSdk.scValToNative(dec));
+        const decimals = Number(sdk.scValToNative(dec));
         return {
           address,
           symbol: code === "native" ? "XLM" : code,
@@ -99,8 +99,9 @@ export type BalanceRead =
  */
 export async function readBalance(token: string, account: string): Promise<BalanceRead> {
   try {
-    const v = await simulate(token, "balance", [StellarSdk.Address.fromString(account).toScVal()]);
-    return { status: "ok", amount: BigInt(StellarSdk.scValToNative(v) as bigint | number | string) };
+    const sdk = await loadSdk();
+    const v = await simulate(token, "balance", [sdk.Address.fromString(account).toScVal()]);
+    return { status: "ok", amount: BigInt(sdk.scValToNative(v) as bigint | number | string) };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     // The asset contract's TrustlineMissingError is contract error #13.

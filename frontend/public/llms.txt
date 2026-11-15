@@ -19,19 +19,24 @@ Key facts:
 - [OpenAPI description](https://skyhitz.io/api/v1/openapi.json)
 - [Integrate page](https://skyhitz.io/integrate/): setup for Claude, Claude Code, Cursor and other MCP clients, curl and JavaScript examples, live vault numbers
 - [Web app](https://skyhitz.io): trade with a Stellar wallet or an email account
-- [Arbitrage bot](https://docs.skyhitz.io/vault/arbitrage-bot): the bot Skyhitz runs between the vault and the Stellar DEX (its trades: https://skyhitz.io/api/v1/bot), and how to run your own
+- [Arbitrage bot](https://docs.skyhitz.io/vault/arbitrage-bot.md): the bot Skyhitz runs between the vault and the Stellar DEX (its trades: https://skyhitz.io/api/v1/bot), and how to run your own
 - [HITZ Terminal](https://skyhitz.io/terminal/): XLM market, leverage and on-chain flow data with an API (https://skyhitz.io/api/terminal); paid plans are paid in USDC or XLM through one vault swap that buys HITZ for the treasury
 
 ## Docs
 
-- [Overview](https://docs.skyhitz.io/)
-- [Whitepaper](https://docs.skyhitz.io/whitepaper): how HITZ Protocol provides liquidity without mercenary LPs or oracles, the vault's fee, the Event Horizon, admin powers and known limits
-- [Contract integration guide](https://docs.skyhitz.io/vault/integration): calls, errors, the fee math, events, arbitrage sizing, calling from a contract
-- [Security review](https://docs.skyhitz.io/security/audit)
-- [Legal disclosure](https://docs.skyhitz.io/legal)
+Each page is plain markdown at these links; the same pages as a website are at https://docs.skyhitz.io/.
+
+- [Overview](https://docs.skyhitz.io/index.md)
+- [Whitepaper](https://docs.skyhitz.io/whitepaper.md): how HITZ Protocol provides liquidity without mercenary LPs or oracles, the vault's fee, the Event Horizon, admin powers and known limits (as a designed page: https://skyhitz.io/whitepaper/)
+- [Contract integration guide](https://docs.skyhitz.io/vault/integration.md): calls, errors, the fee math, events, arbitrage sizing, calling from a contract
+- [Security review](https://docs.skyhitz.io/security/audit.md)
+- [Legal disclosure](https://docs.skyhitz.io/legal.md)
+- [Questions and answers](https://skyhitz.io/#questions): what the protocol is, fees, the Event Horizon, vaulting, admin powers, known limits
 
 ## Optional
 
+- [The complete documentation in one file](https://docs.skyhitz.io/llms-full.txt)
 - [Source code](https://github.com/skyhitz/hitz-gravity): contracts, web app, API and MCP server
-- [Fee backtest](https://docs.skyhitz.io/security/fee-backtest)
+- [Fee backtest](https://docs.skyhitz.io/security/fee-backtest.md)
 - [stellar.toml](https://skyhitz.io/.well-known/stellar.toml)
+- [Reporting a security problem](https://skyhitz.io/.well-known/security.txt)

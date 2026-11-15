@@ -1,35 +1,44 @@
-import * as StellarSdk from "@stellar/stellar-sdk";
+// The SDK is loaded on demand (sdk.ts): this module is imported by every app
+// page, so it takes the SDK's types only and awaits the code where it runs.
+import type * as StellarSdk from "@stellar/stellar-sdk";
 import { errorMessage } from "./errors";
+import { loadSdk, toHex, type Sdk } from "./sdk";
 
 const CONTRACT_ID =
   "CBAPZAZNNB4X3VPXV2LYA5RMV7XHXIVREES2GG7R5GUXDZ4R4CKOY4EU";
 const NETWORK_PASSPHRASE = "Public Global Stellar Network ; September 2015";
 const RPC_URL = "https://soroban-rpc.mainnet.stellar.gateway.fm";
 
-const server = new StellarSdk.rpc.Server(RPC_URL);
+let rpcServer: StellarSdk.rpc.Server | null = null;
+
+/** The SDK and one RPC client for the page, created on first use. */
+async function rpc(): Promise<{ sdk: Sdk; server: StellarSdk.rpc.Server }> {
+  const sdk = await loadSdk();
+  rpcServer ??= new sdk.rpc.Server(RPC_URL);
+  return { sdk, server: rpcServer };
+}
 
 // ─── Helpers ───────────────────────────────────────────
 
-function toScVal(type: string, value: string | number | bigint): StellarSdk.xdr.ScVal {
+/** A contract argument as [type, value], turned into an ScVal once the SDK is there. */
+type Arg = [type: "address" | "i128" | "u32" | "bytes32", value: string | number | bigint];
+
+function toScVal(sdk: Sdk, [type, value]: Arg): StellarSdk.xdr.ScVal {
   switch (type) {
     case "address":
-      return StellarSdk.Address.fromString(value as string).toScVal();
+      return sdk.Address.fromString(value as string).toScVal();
     case "i128":
-      return StellarSdk.nativeToScVal(BigInt(value), { type: "i128" });
+      return sdk.nativeToScVal(BigInt(value), { type: "i128" });
     case "u32":
-      return StellarSdk.nativeToScVal(Number(value), { type: "u32" });
+      return sdk.nativeToScVal(Number(value), { type: "u32" });
     case "bytes32": {
       const hex = value as string;
       const bytes = new Uint8Array(hex.match(/.{1,2}/g)!.map((b) => parseInt(b, 16)));
-      return StellarSdk.xdr.ScVal.scvBytes(Buffer.from(bytes));
+      return sdk.nativeToScVal(bytes, { type: "bytes" });
     }
     default:
       throw new Error(`Unknown type: ${type}`);
   }
-}
-
-function fromScVal(val: StellarSdk.xdr.ScVal): unknown {
-  return StellarSdk.scValToNative(val);
 }
 
 // ─── Read-only calls (no signing) ─────────────────────
@@ -47,9 +56,10 @@ export async function simulate(
   method: string,
   args: StellarSdk.xdr.ScVal[] = []
 ): Promise<StellarSdk.xdr.ScVal> {
-  const account = new StellarSdk.Account(SIM_SOURCE, "0");
-  const contract = new StellarSdk.Contract(contractId);
-  const tx = new StellarSdk.TransactionBuilder(account, {
+  const { sdk, server } = await rpc();
+  const account = new sdk.Account(SIM_SOURCE, "0");
+  const contract = new sdk.Contract(contractId);
+  const tx = new sdk.TransactionBuilder(account, {
     fee: "100",
     networkPassphrase: NETWORK_PASSPHRASE,
   })
@@ -58,10 +68,10 @@ export async function simulate(
     .build();
 
   const sim = await server.simulateTransaction(tx);
-  if (StellarSdk.rpc.Api.isSimulationError(sim)) {
+  if (sdk.rpc.Api.isSimulationError(sim)) {
     throw new Error(`Simulation error: ${sim.error}`);
   }
-  if (!StellarSdk.rpc.Api.isSimulationSuccess(sim)) {
+  if (!sdk.rpc.Api.isSimulationSuccess(sim)) {
     throw new Error("Simulation failed");
   }
   const result = sim.result;
@@ -69,23 +79,22 @@ export async function simulate(
   return result.retval;
 }
 
-function simulateCall(method: string, args: StellarSdk.xdr.ScVal[] = []): Promise<StellarSdk.xdr.ScVal> {
-  return simulate(CONTRACT_ID, method, args);
+/** A view of the HITZ token, as a native value. */
+async function view(method: string, args: Arg[] = []): Promise<unknown> {
+  const sdk = await loadSdk();
+  return sdk.scValToNative(await simulate(CONTRACT_ID, method, args.map((a) => toScVal(sdk, a))));
 }
 
 export async function getSafetyLimit(): Promise<bigint> {
-  const val = await simulateCall("safety_limit");
-  return BigInt(fromScVal(val) as string | number | bigint);
+  return BigInt((await view("safety_limit")) as string | number | bigint);
 }
 
 export async function getTotalMass(): Promise<bigint> {
-  const val = await simulateCall("total_mass");
-  return BigInt(fromScVal(val) as string | number | bigint);
+  return BigInt((await view("total_mass")) as string | number | bigint);
 }
 
 export async function getBalance(address: string): Promise<bigint> {
-  const val = await simulateCall("balance", [toScVal("address", address)]);
-  return BigInt(fromScVal(val) as string | number | bigint);
+  return BigInt((await view("balance", [["address", address]])) as string | number | bigint);
 }
 
 /**
@@ -93,10 +102,7 @@ export async function getBalance(address: string): Promise<bigint> {
  * live L on the account's next transfer, so prefer `isActuallyVaulted`.
  */
 export async function isAccountVaulted(address: string): Promise<boolean> {
-  const val = await simulateCall("is_account_vaulted", [
-    toScVal("address", address),
-  ]);
-  return fromScVal(val) as boolean;
+  return (await view("is_account_vaulted", [["address", address]])) as boolean;
 }
 
 /**
@@ -105,18 +111,15 @@ export async function isAccountVaulted(address: string): Promise<boolean> {
  * enforces, whatever the stored flag says.
  */
 export async function isActuallyVaulted(address: string): Promise<boolean> {
-  const val = await simulateCall("is_actually_vaulted", [toScVal("address", address)]);
-  return fromScVal(val) as boolean;
+  return (await view("is_actually_vaulted", [["address", address]])) as boolean;
 }
 
 export async function isPool(address: string): Promise<boolean> {
-  const val = await simulateCall("is_pool", [toScVal("address", address)]);
-  return fromScVal(val) as boolean;
+  return (await view("is_pool", [["address", address]])) as boolean;
 }
 
 export async function isRouter(address: string): Promise<boolean> {
-  const val = await simulateCall("is_router", [toScVal("address", address)]);
-  return fromScVal(val) as boolean;
+  return (await view("is_router", [["address", address]])) as boolean;
 }
 
 /**
@@ -126,29 +129,24 @@ export async function isRouter(address: string): Promise<boolean> {
  * Authoritative — no RPC event retention dependency.
  */
 export async function listPools(): Promise<string[]> {
-  const val = await simulateCall("list_pools");
-  return (fromScVal(val) as string[]) ?? [];
+  return ((await view("list_pools")) as string[]) ?? [];
 }
 
 /** See `listPools`. */
 export async function listRouters(): Promise<string[]> {
-  const val = await simulateCall("list_routers");
-  return (fromScVal(val) as string[]) ?? [];
+  return ((await view("list_routers")) as string[]) ?? [];
 }
 
 export async function getDecimals(): Promise<number> {
-  const val = await simulateCall("decimals");
-  return Number(fromScVal(val));
+  return Number(await view("decimals"));
 }
 
 export async function getName(): Promise<string> {
-  const val = await simulateCall("name");
-  return fromScVal(val) as string;
+  return (await view("name")) as string;
 }
 
 export async function getSymbol(): Promise<string> {
-  const val = await simulateCall("symbol");
-  return fromScVal(val) as string;
+  return (await view("symbol")) as string;
 }
 
 /**
@@ -163,7 +161,7 @@ export async function getAdmin(): Promise<string | null> {
   if (adminCache) return adminCache;
   adminCache = (async () => {
     try {
-      return ((fromScVal(await simulateCall("admin")) as string | null | undefined) ?? null);
+      return (((await view("admin")) as string | null | undefined) ?? null);
     } catch {
       adminCache = null; // allow retry next call
       return null;
@@ -181,12 +179,13 @@ export interface PendingUpgrade {
 
 /** A proposed upgrade waiting out its 7-day timelock, if any. Works for the token and the vault. */
 export async function getPendingUpgrade(contractId: string = CONTRACT_ID): Promise<PendingUpgrade | null> {
-  const native = fromScVal(await simulate(contractId, "pending_upgrade")) as
+  const sdk = await loadSdk();
+  const native = sdk.scValToNative(await simulate(contractId, "pending_upgrade")) as
     | { wasm_hash: Uint8Array; eta: bigint }
     | null
     | undefined;
   if (!native) return null;
-  return { wasmHash: Buffer.from(native.wasm_hash).toString("hex"), eta: Number(native.eta) };
+  return { wasmHash: toHex(native.wasm_hash), eta: Number(native.eta) };
 }
 
 // ─── Write calls (require Freighter signing) ──────────
@@ -219,25 +218,26 @@ export async function restoreArchivedState(
     opts: { networkPassphrase: string; address?: string }
   ) => Promise<string>
 ): Promise<void> {
+  const { sdk, server } = await rpc();
   const account = await server.getAccount(publicKey);
-  const draft = new StellarSdk.TransactionBuilder(account, {
+  const draft = new sdk.TransactionBuilder(account, {
     fee: "100",
     networkPassphrase: NETWORK_PASSPHRASE,
   })
     .setSorobanData(preamble.transactionData.build())
-    .addOperation(StellarSdk.Operation.restoreFootprint({}))
+    .addOperation(sdk.Operation.restoreFootprint({}))
     .setTimeout(60)
     .build();
   const sim = await server.simulateTransaction(draft);
-  if (StellarSdk.rpc.Api.isSimulationError(sim)) {
+  if (sdk.rpc.Api.isSimulationError(sim)) {
     throw new Error(`restore simulation failed: ${sim.error}`);
   }
-  const assembled = StellarSdk.rpc.assembleTransaction(draft, sim).build();
+  const assembled = sdk.rpc.assembleTransaction(draft, sim).build();
   const signedXdr = await signTransaction(assembled.toXDR(), {
     networkPassphrase: NETWORK_PASSPHRASE,
     address: publicKey,
   });
-  const signedTx = StellarSdk.TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE);
+  const signedTx = sdk.TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE);
   const resp = await server.sendTransaction(signedTx);
   if (resp.status === "ERROR") {
     const xdr = resp.errorResult?.toXDR("base64");
@@ -275,17 +275,19 @@ function txResultCode(result: StellarSdk.xdr.TransactionResult | undefined): str
 async function buildAndSend(
   publicKey: string,
   method: string,
-  args: StellarSdk.xdr.ScVal[],
+  callArgs: Arg[],
   signTransaction: (xdr: string, opts: { networkPassphrase: string; address?: string }) => Promise<string>
 ): Promise<TxResult> {
   try {
-    const contract = new StellarSdk.Contract(CONTRACT_ID);
+    const { sdk, server } = await rpc();
+    const args = callArgs.map((a) => toScVal(sdk, a));
+    const contract = new sdk.Contract(CONTRACT_ID);
 
     // Helper: fetch fresh account + build + simulate. Called twice in the
     // rare restore path (once to detect archival, once after restore).
     const buildAndSimulate = async () => {
       const account = await server.getAccount(publicKey);
-      const tx = new StellarSdk.TransactionBuilder(account, {
+      const tx = new sdk.TransactionBuilder(account, {
         fee: "10000000",
         networkPassphrase: NETWORK_PASSPHRASE,
       })
@@ -297,28 +299,28 @@ async function buildAndSend(
     };
 
     let { tx, sim } = await buildAndSimulate();
-    if (StellarSdk.rpc.Api.isSimulationError(sim)) {
+    if (sdk.rpc.Api.isSimulationError(sim)) {
       return { success: false, error: sim.error };
     }
 
     // Archived state? Restore first, then re-simulate. Invisible to the
     // UI aside from one extra wallet prompt.
-    if (StellarSdk.rpc.Api.isSimulationRestore(sim)) {
+    if (sdk.rpc.Api.isSimulationRestore(sim)) {
       await restoreArchivedState(publicKey, sim.restorePreamble, signTransaction);
       ({ tx, sim } = await buildAndSimulate());
-      if (StellarSdk.rpc.Api.isSimulationError(sim)) {
+      if (sdk.rpc.Api.isSimulationError(sim)) {
         return { success: false, error: sim.error };
       }
     }
 
-    const prepared = StellarSdk.rpc.assembleTransaction(tx, sim).build();
+    const prepared = sdk.rpc.assembleTransaction(tx, sim).build();
 
     const signedXdr = await signTransaction(prepared.toXDR(), {
       networkPassphrase: NETWORK_PASSPHRASE,
       address: publicKey,
     });
 
-    const signedTx = StellarSdk.TransactionBuilder.fromXDR(
+    const signedTx = sdk.TransactionBuilder.fromXDR(
       signedXdr,
       NETWORK_PASSPHRASE
     );
@@ -359,8 +361,8 @@ export async function mint(
   signTransaction: (xdr: string, opts: { networkPassphrase: string }) => Promise<string>
 ): Promise<TxResult> {
   return buildAndSend(publicKey, "mint", [
-    toScVal("address", to),
-    toScVal("i128", amount),
+    ["address", to],
+    ["i128", amount],
   ], signTransaction);
 }
 
@@ -372,9 +374,9 @@ export async function transfer(
   signTransaction: (xdr: string, opts: { networkPassphrase: string }) => Promise<string>
 ): Promise<TxResult> {
   return buildAndSend(publicKey, "transfer", [
-    toScVal("address", from),
-    toScVal("address", to),
-    toScVal("i128", amount),
+    ["address", from],
+    ["address", to],
+    ["i128", amount],
   ], signTransaction);
 }
 
@@ -387,10 +389,10 @@ export async function approve(
   signTransaction: (xdr: string, opts: { networkPassphrase: string }) => Promise<string>
 ): Promise<TxResult> {
   return buildAndSend(publicKey, "approve", [
-    toScVal("address", from),
-    toScVal("address", spender),
-    toScVal("i128", amount),
-    toScVal("u32", expirationLedger),
+    ["address", from],
+    ["address", spender],
+    ["i128", amount],
+    ["u32", expirationLedger],
   ], signTransaction);
 }
 
@@ -403,10 +405,10 @@ export async function transferFrom(
   signTransaction: (xdr: string, opts: { networkPassphrase: string }) => Promise<string>
 ): Promise<TxResult> {
   return buildAndSend(publicKey, "transfer_from", [
-    toScVal("address", spender),
-    toScVal("address", from),
-    toScVal("address", to),
-    toScVal("i128", amount),
+    ["address", spender],
+    ["address", from],
+    ["address", to],
+    ["i128", amount],
   ], signTransaction);
 }
 
@@ -417,8 +419,8 @@ export async function burn(
   signTransaction: (xdr: string, opts: { networkPassphrase: string }) => Promise<string>
 ): Promise<TxResult> {
   return buildAndSend(publicKey, "burn", [
-    toScVal("address", from),
-    toScVal("i128", amount),
+    ["address", from],
+    ["i128", amount],
   ], signTransaction);
 }
 
@@ -428,7 +430,7 @@ export async function registerPoolAddress(
   signTransaction: (xdr: string, opts: { networkPassphrase: string }) => Promise<string>
 ): Promise<TxResult> {
   return buildAndSend(publicKey, "register_pool_address", [
-    toScVal("address", address),
+    ["address", address],
   ], signTransaction);
 }
 
@@ -438,7 +440,7 @@ export async function removePoolAddress(
   signTransaction: (xdr: string, opts: { networkPassphrase: string }) => Promise<string>
 ): Promise<TxResult> {
   return buildAndSend(publicKey, "remove_pool_address", [
-    toScVal("address", address),
+    ["address", address],
   ], signTransaction);
 }
 
@@ -448,7 +450,7 @@ export async function registerRouterAddress(
   signTransaction: (xdr: string, opts: { networkPassphrase: string }) => Promise<string>
 ): Promise<TxResult> {
   return buildAndSend(publicKey, "register_router_address", [
-    toScVal("address", address),
+    ["address", address],
   ], signTransaction);
 }
 
@@ -458,7 +460,7 @@ export async function removeRouterAddress(
   signTransaction: (xdr: string, opts: { networkPassphrase: string }) => Promise<string>
 ): Promise<TxResult> {
   return buildAndSend(publicKey, "remove_router_address", [
-    toScVal("address", address),
+    ["address", address],
   ], signTransaction);
 }
 

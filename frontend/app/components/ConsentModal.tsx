@@ -1,13 +1,15 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { CONSENT_KEY } from "../lib/consent";
 
 // v2 (Nov 4, 2026): the terms now cover the Sovereign Vault (fees, no
 // withdrawals, timelocked admin powers), so everyone accepts them again.
 // v3 (Nov 13, 2026): corrected. The admin can change the token's registry at
 // once (which exempts an address from vaulting and moves L); v2 said the
 // developers could not affect any Vaulted state. Everyone accepts again.
-export const CONSENT_KEY = "gravity-hitz-consent-v3";
+// The key lives in lib/consent.ts so pages can read it without this modal's text.
+export { CONSENT_KEY };
 
 interface Props {
   onAccept: () => void;

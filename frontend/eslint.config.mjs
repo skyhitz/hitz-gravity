@@ -16,6 +16,8 @@ const eslintConfig = defineConfig([
     // own tsconfig (functions/tsconfig.json). It's not part of the Next
     // build, so keep it out of the Next lint pass too.
     "functions/**",
+    // Wrangler's local dev output (bundled Worker, local state).
+    ".wrangler/**",
   ]),
 ]);
 

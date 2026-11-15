@@ -310,7 +310,7 @@ export default function VaultSwap() {
     if (!publicKey || confirmedOut === null || inStroops <= 0n) return;
     setTx({ status: "signing" });
     try {
-      const call = swapCall({ account: publicKey, tokenIn, tokenOut, amountIn: inStroops, expectedOut: confirmedOut, slippageBps });
+      const call = await swapCall({ account: publicKey, tokenIn, tokenOut, amountIn: inStroops, expectedOut: confirmedOut, slippageBps });
       const res = await callContract(call.contractId, call.method, call.args);
       if (res.success && res.hash) {
         setTx({ status: "success", hash: res.hash });

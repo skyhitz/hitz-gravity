@@ -9,20 +9,67 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import CopyBlock from "../components/integrate/CopyBlock";
 import LiveVault from "../components/integrate/LiveVault";
+import JsonLd from "../components/JsonLd";
+import { ORG_ID, SITE_ID, breadcrumb, graph, organization, website } from "../lib/schema";
+import { pageMetadata } from "../lib/seo";
+import { OG_IMAGE, SITE_URL, pageUrl } from "../lib/site";
 import { CONTRACT_ID } from "../lib/stellar";
 import { USDC_SAC, XLM_SAC } from "../lib/tokens";
 import { VAULT_ID } from "../lib/vault";
 
-export const metadata: Metadata = {
-  title: "Integrate HITZ. Sovereign Vault API and MCP server",
-  description:
-    "Trade HITZ on Stellar from a bot, an app or an AI agent: a keyless HTTP API and an MCP server that build ready-to-sign transactions for the Sovereign Vault.",
-};
+const PATH = "/integrate/";
+const TITLE = "Integrate HITZ. Sovereign Vault API and MCP server";
+const DESCRIPTION =
+  "Trade HITZ on Stellar from a bot, an app or an AI agent: a keyless HTTP API and an MCP server that build ready-to-sign Sovereign Vault swaps.";
 
-const SITE = "https://skyhitz.io";
+export const metadata: Metadata = pageMetadata({ title: TITLE, description: DESCRIPTION, path: PATH, type: "article" });
+
+const SITE = SITE_URL;
 const API = `${SITE}/api/v1`;
 const MCP = `${SITE}/mcp`;
 const GUIDE = "https://docs.skyhitz.io/vault/integration";
+
+const structuredData = graph(
+  organization,
+  website,
+  {
+    "@type": "TechArticle",
+    "@id": `${pageUrl(PATH)}#article`,
+    headline: "Trade HITZ from code or an AI agent",
+    description: DESCRIPTION,
+    url: pageUrl(PATH),
+    mainEntityOfPage: pageUrl(PATH),
+    image: OG_IMAGE.url,
+    inLanguage: "en",
+    isPartOf: { "@id": SITE_ID },
+    author: { "@id": ORG_ID },
+    publisher: { "@id": ORG_ID },
+  },
+  {
+    "@type": "WebAPI",
+    "@id": `${API}#api`,
+    name: "HITZ Sovereign Vault API",
+    description:
+      "Keyless HTTP API for the HITZ Sovereign Vault on Stellar mainnet: vault state, exact quotes, unsigned swap transactions ready to sign, submission and transaction status.",
+    url: API,
+    documentation: `${API}/openapi.json`,
+    termsOfService: "https://docs.skyhitz.io/legal",
+    provider: { "@id": ORG_ID },
+  },
+  {
+    "@type": "SoftwareApplication",
+    "@id": `${MCP}#mcp`,
+    name: "HITZ Sovereign Vault MCP server",
+    description:
+      "Model Context Protocol server (Streamable HTTP, no key) with the tools get_vault, get_account, quote, build_swap, submit_transaction and get_transaction. It never holds a key: the user signs with their own wallet.",
+    url: MCP,
+    applicationCategory: "DeveloperApplication",
+    operatingSystem: "Any",
+    isAccessibleForFree: true,
+    provider: { "@id": ORG_ID },
+  },
+  breadcrumb("Integrate", PATH)
+);
 
 const TOOLS: [string, string][] = [
   ["get_vault", "Pools, prices, fees, USD values and the Event Horizon."],
@@ -93,6 +140,7 @@ const MCP_JSON = `{
 export default function IntegratePage() {
   return (
     <div className="min-h-screen bg-background text-foreground">
+      <JsonLd data={structuredData} />
       <nav className="sticky top-0 z-10 border-b border-border bg-background/80 backdrop-blur-md">
         <div className="max-w-3xl mx-auto px-6 h-12 flex items-center justify-between">
           <Link href="/" className="text-muted text-sm hover:text-foreground transition-colors flex items-center gap-2">
