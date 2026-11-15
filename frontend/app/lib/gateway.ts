@@ -9,7 +9,7 @@
 // discriminated-union result so call sites can pattern-match instead of
 // wrapping every call in try/catch.
 
-import * as StellarSdk from "@stellar/stellar-sdk";
+import type * as StellarSdk from "@stellar/stellar-sdk";
 
 // ─── Shared email predicate ──────────────────────────────────────────────
 // Mirrors the server-side check in functions/_lib/email.ts. Not a full
@@ -86,8 +86,17 @@ export function verify(token: string) {
   }>(`/api/auth/verify?token=${encodeURIComponent(token)}`);
 }
 
-export function me() {
-  return call<{ email: string; publicKey: string }>("/api/auth/me");
+/**
+ * The email session, if there is one. Asked on every page load, where having
+ * none is the normal case: /api/auth/session answers 200 either way, so a
+ * visitor who isn't signed in gets no failed request in their console.
+ */
+export async function me(): Promise<GatewayResult<{ email: string; publicKey: string }>> {
+  const res = await call<{ email: string | null; publicKey: string | null }>("/api/auth/session");
+  if (!res.ok) return res;
+  const { email, publicKey } = res.data;
+  if (!email || !publicKey) return { ok: false, error: "no session" };
+  return { ok: true, data: { email, publicKey } };
 }
 
 export function logout() {

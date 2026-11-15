@@ -35,9 +35,11 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import * as StellarSdk from "@stellar/stellar-sdk";
+// Types only: the SDK itself is loaded on demand (lib/sdk.ts).
+import type * as StellarSdk from "@stellar/stellar-sdk";
 import * as gateway from "../lib/gateway";
 import { errorMessage } from "../lib/errors";
+import { loadSdk } from "../lib/sdk";
 import {
   NETWORK_PASSPHRASE,
   RPC_URL,
@@ -91,9 +93,48 @@ function loadSwk() {
     swkPromise = Promise.all([
       import("@creit.tech/stellar-wallets-kit"),
       import("@creit.tech/stellar-wallets-kit/modules/utils"),
-    ]).then(([kit, utils]) => ({ kit, utils }));
+    ])
+      .then(([kit, utils]) => ({ kit, utils }))
+      .catch((err) => {
+        // A failed chunk download must not be remembered: the next call retries.
+        swkPromise = null;
+        throw err;
+      });
   }
   return swkPromise;
+}
+
+// The kit is a module-level singleton, so it is set up once per page however
+// often the provider mounts (leaving the app pages and coming back remounts it).
+let kitInitialized = false;
+
+async function readyKit() {
+  const mods = await loadSwk();
+  if (!kitInitialized) {
+    kitInitialized = true;
+    mods.kit.StellarWalletsKit.init({
+      modules: mods.utils.defaultModules(),
+      network: mods.kit.Networks.PUBLIC,
+    });
+  }
+  return mods;
+}
+
+/**
+ * Where the kit keeps a connected wallet's address between visits (its
+ * LocalStorageKeys.activeAddress). The kit restores a session from this key
+ * and nothing else, so when it is absent there is no session to restore and
+ * the kit, a few hundred KB, isn't downloaded until the visitor asks to
+ * connect a wallet.
+ */
+const SWK_ACTIVE_ADDRESS = "@StellarWalletsKit/activeAddress";
+
+function hasStoredWallet(): boolean {
+  try {
+    return !!window.localStorage.getItem(SWK_ACTIVE_ADDRESS);
+  } catch {
+    return false; // storage blocked: nothing could have been stored either
+  }
 }
 
 // ─── Wallet-mode contract call ───────────────────────────────────────────────
@@ -109,15 +150,16 @@ async function walletCallContract(
   args: StellarSdk.xdr.ScVal[]
 ): Promise<TxResult> {
   try {
-    const server = new StellarSdk.rpc.Server(RPC_URL);
-    const contract = new StellarSdk.Contract(contractId);
+    const sdk = await loadSdk();
+    const server = new sdk.rpc.Server(RPC_URL);
+    const contract = new sdk.Contract(contractId);
 
     // Fresh sequence + simulate on each attempt. Called twice in the rare
     // TTL-restore path (pre-restore to detect archival, post-restore to
     // get final assembled tx against live state).
     const buildAndSimulate = async () => {
       const account = await server.getAccount(publicKey);
-      const tx = new StellarSdk.TransactionBuilder(account, {
+      const tx = new sdk.TransactionBuilder(account, {
         fee: "10000000",
         networkPassphrase: NETWORK_PASSPHRASE,
       })
@@ -129,27 +171,27 @@ async function walletCallContract(
     };
 
     let { tx, sim } = await buildAndSimulate();
-    if (StellarSdk.rpc.Api.isSimulationError(sim)) {
+    if (sdk.rpc.Api.isSimulationError(sim)) {
       return { success: false, error: sim.error };
     }
     // Soroban TTL: ~30 days of inactivity archives state to cold storage.
     // If the sim returned a restorePreamble, submit a user-signed
     // RestoreFootprintOp first, then re-simulate against live state. The
     // user sees one extra wallet prompt — no failed tx, no manual steps.
-    if (StellarSdk.rpc.Api.isSimulationRestore(sim)) {
+    if (sdk.rpc.Api.isSimulationRestore(sim)) {
       await restoreArchivedState(
         publicKey,
         sim.restorePreamble,
         (xdr, opts) => sign(xdr, opts.networkPassphrase)
       );
       ({ tx, sim } = await buildAndSimulate());
-      if (StellarSdk.rpc.Api.isSimulationError(sim)) {
+      if (sdk.rpc.Api.isSimulationError(sim)) {
         return { success: false, error: sim.error };
       }
     }
-    const prepared = StellarSdk.rpc.assembleTransaction(tx, sim).build();
+    const prepared = sdk.rpc.assembleTransaction(tx, sim).build();
     const signedXdr = await sign(prepared.toXDR(), NETWORK_PASSPHRASE);
-    const signedTx = StellarSdk.TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE);
+    const signedTx = sdk.TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE);
 
     const response = await server.sendTransaction(signedTx);
     if (response.status === "ERROR") {
@@ -196,51 +238,20 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [email, setEmail] = useState<string | null>(null);
   const [connectionType, setConnectionType] = useState<ConnectionType>(null);
   const [connecting, setConnecting] = useState(false);
-  const kitReady = useRef(false);
+  // Detaches this provider's listeners from the kit; null until they are attached.
+  const detachKit = useRef<(() => void) | null>(null);
+  const mounted = useRef(false);
 
-  // ── Init: runs once after hydration, client-only ──────────────────────────
-  // Two independent restores:
-  //   (a) wallet session — from SWK's persisted storage
-  //   (b) email session — from our HttpOnly cookie, read via /api/auth/me
-  // Whichever resolves first wins; the other is a no-op if a mode is set.
-  useEffect(() => {
-    let cancelled = false;
-    let cleanupState: (() => void) | null = null;
-    let cleanupDisconnect: (() => void) | null = null;
-
-    // (b) Email session — one fetch on mount.
-    gateway.me().then((res) => {
-      if (cancelled) return;
-      if (res.ok) {
-        setPublicKey(res.data.publicKey);
-        setEmail(res.data.email);
-        setConnectionType("email");
-      }
-    });
-
-    // (a) Wallet init + restore
-    loadSwk().then(({ kit: { StellarWalletsKit, Networks, KitEventType }, utils: { defaultModules } }) => {
-      if (cancelled) return;
-      if (!kitReady.current) {
-        kitReady.current = true;
-        StellarWalletsKit.init({
-          modules: defaultModules(),
-          network: Networks.PUBLIC,
-        });
-      }
-
-      StellarWalletsKit.getAddress()
-        .then(({ address }) => {
-          if (cancelled || !address) return;
-          // Wallet address overrides email if both exist — wallet is the
-          // more "active" connection (user took an action since page load).
-          setPublicKey(address);
-          setEmail(null);
-          setConnectionType("wallet");
-        })
-        .catch(() => { /* no stored wallet session */ });
-
-      cleanupState = StellarWalletsKit.on(KitEventType.STATE_UPDATED, (e) => {
+  /**
+   * The kit, loaded, initialized and wired to this provider's state. Called
+   * on mount when there is a wallet session to restore, and otherwise the
+   * first time the visitor does something that needs a wallet.
+   */
+  const attachKit = useCallback(async () => {
+    const mods = await readyKit();
+    if (mounted.current && !detachKit.current) {
+      const { StellarWalletsKit, KitEventType } = mods.kit;
+      const offState = StellarWalletsKit.on(KitEventType.STATE_UPDATED, (e) => {
         if (e.payload.address) {
           setPublicKey(e.payload.address);
           setEmail(null);
@@ -258,8 +269,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
           });
         }
       });
-
-      cleanupDisconnect = StellarWalletsKit.on(KitEventType.DISCONNECT, () => {
+      const offDisconnect = StellarWalletsKit.on(KitEventType.DISCONNECT, () => {
         // Only drop if we were in wallet mode — email session is unaffected.
         setConnectionType((cur) => {
           if (cur === "wallet") {
@@ -269,21 +279,63 @@ export function WalletProvider({ children }: { children: ReactNode }) {
           return cur;
         });
       });
+      detachKit.current = () => {
+        offState();
+        offDisconnect();
+      };
+    }
+    return mods;
+  }, []);
+
+  // ── Init: runs once after hydration, client-only ──────────────────────────
+  // Two independent restores:
+  //   (a) wallet session — from SWK's persisted storage
+  //   (b) email session — from our HttpOnly cookie, read via /api/auth/session
+  // Whichever resolves first wins; the other is a no-op if a mode is set.
+  useEffect(() => {
+    let cancelled = false;
+    mounted.current = true;
+
+    // (b) Email session — one fetch on mount.
+    gateway.me().then((res) => {
+      if (cancelled) return;
+      if (res.ok) {
+        setPublicKey(res.data.publicKey);
+        setEmail(res.data.email);
+        setConnectionType("email");
+      }
     });
+
+    // (a) Wallet restore, only when the kit has a session stored. A visitor
+    // who never connected a wallet doesn't download the kit at all.
+    if (hasStoredWallet()) {
+      attachKit()
+        .then(({ kit: { StellarWalletsKit } }) => StellarWalletsKit.getAddress())
+        .then(({ address }) => {
+          if (cancelled || !address) return;
+          // Wallet address overrides email if both exist — wallet is the
+          // more "active" connection (user took an action since page load).
+          setPublicKey(address);
+          setEmail(null);
+          setConnectionType("wallet");
+        })
+        .catch(() => { /* no stored wallet session, or the kit didn't load */ });
+    }
 
     return () => {
       cancelled = true;
-      cleanupState?.();
-      cleanupDisconnect?.();
+      mounted.current = false;
+      detachKit.current?.();
+      detachKit.current = null;
     };
-  }, []);
+  }, [attachKit]);
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
   const connectWallet = useCallback(async () => {
     setConnecting(true);
     try {
-      const { kit: { StellarWalletsKit } } = await loadSwk();
+      const { kit: { StellarWalletsKit } } = await attachKit();
       const { address } = await StellarWalletsKit.authModal();
       setPublicKey(address);
       setEmail(null);
@@ -293,7 +345,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     } finally {
       setConnecting(false);
     }
-  }, []);
+  }, [attachKit]);
 
   const connectEmail = useCallback(async (addr: string) => {
     const res = await gateway.login(addr);
@@ -302,7 +354,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const disconnect = useCallback(async () => {
     if (connectionType === "wallet") {
-      const { kit: { StellarWalletsKit } } = await loadSwk();
+      const { kit: { StellarWalletsKit } } = await attachKit();
       await StellarWalletsKit.disconnect().catch(() => { /* ignore */ });
     } else if (connectionType === "email") {
       await gateway.logout();
@@ -310,21 +362,21 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setPublicKey(null);
     setEmail(null);
     setConnectionType(null);
-  }, [connectionType]);
+  }, [connectionType, attachKit]);
 
   const sign = useCallback(
     async (xdr: string, networkPassphrase: string): Promise<string> => {
       if (connectionType !== "wallet") {
         throw new Error("sign() is wallet-only; use callContract() for email sessions");
       }
-      const { kit: { StellarWalletsKit } } = await loadSwk();
+      const { kit: { StellarWalletsKit } } = await attachKit();
       const { signedTxXdr } = await StellarWalletsKit.signTransaction(xdr, {
         networkPassphrase,
         address: publicKey ?? undefined,
       });
       return signedTxXdr;
     },
-    [publicKey, connectionType]
+    [publicKey, connectionType, attachKit]
   );
 
   const callContract = useCallback(

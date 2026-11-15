@@ -7,20 +7,34 @@
 // maintainer-only note dropped, and every relative link rewritten: links to
 // another published file point to its docs page, everything else to the file
 // on GitHub. Hand-written pages in extra/ are copied as they are.
+//
+// The same pages are also written out as plain markdown for programs that
+// read better without the site around the text (AI assistants, agents,
+// crawlers), into generated/, which Docusaurus serves next to static/:
+//
+//   /<page>.md       each page on its own, e.g. /whitepaper.md
+//   /llms-full.txt   every page in one file, in the sidebar's order
+//
+// static/llms.txt is the index that points to them; every docs link in it is
+// checked here, so it can't name a page that doesn't exist.
 
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, posix } from "node:path";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join, posix, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DOCS = join(dirname(fileURLToPath(import.meta.url)), "..");
 const REPO_ROOT = join(DOCS, "..");
 const OUT = join(DOCS, "content");
+/** Plain-markdown copies and llms-full.txt: a second static directory (docusaurus.config.ts). */
+const GENERATED = join(DOCS, "generated");
+const SITE = "https://docs.skyhitz.io";
 const GITHUB = "https://github.com/skyhitz/hitz-gravity";
 
 /** Published files: repo path → docs page. Order is irrelevant; sidebars.ts sets it. */
 const PAGES = [
   { src: "README.md", out: "index.md", slug: "/", title: "Overview", description: "HITZ Protocol: oracle-free, protocol-owned liquidity on Stellar." },
-  { src: "WHITEPAPER.md", out: "whitepaper.md", slug: "/whitepaper", title: "Whitepaper", description: "How HITZ Protocol provides liquidity without mercenary LPs or oracles." },
+  // The same text is published, designed, at skyhitz.io/whitepaper: that page is the one search engines should rank.
+  { src: "WHITEPAPER.md", out: "whitepaper.md", slug: "/whitepaper", title: "Whitepaper", description: "How HITZ Protocol provides liquidity without mercenary LPs or oracles.", canonical: "https://skyhitz.io/whitepaper/" },
   { src: "contracts/sovereign-vault/INTEGRATION.md", out: "vault/integration.md", slug: "/vault/integration", title: "Integrating the vault", description: "Calls, events and arbitrage for bots, wallets and apps." },
   { src: "contracts/sovereign-vault/MIGRATION.md", out: "vault/migration.md", slug: "/vault/migration", title: "Migration from Aquarius", description: "How HITZ moved from Aquarius pools to the Sovereign Vault." },
   { src: "frontend/ARB_BOT.md", out: "vault/arbitrage-bot.md", slug: "/vault/arbitrage-bot", title: "Arbitrage bot", description: "The bot Skyhitz runs between the vault and the Stellar DEX, and how to run your own." },
@@ -107,6 +121,8 @@ function frontMatter(p) {
     `slug: ${q(p.slug)}`,
     `description: ${q(p.description)}`,
     `custom_edit_url: ${q(`${GITHUB}/blob/main/${p.src}`)}`,
+    // Read by src/theme/DocItem/Metadata: the page's canonical URL, when it isn't this site's own.
+    ...(p.canonical ? [`canonical_url: ${q(p.canonical)}`] : []),
     "---",
     "",
   ].join("\n");
@@ -127,3 +143,103 @@ for (const p of PAGES) {
 
 cpSync(join(DOCS, "extra"), OUT, { recursive: true });
 console.log(`[sync] ${PAGES.length} pages from the repo, plus extra/ → content/`);
+
+// ─── Plain markdown for machines ─────────────────────────────────────────────
+
+/** The sidebar's order, read from sidebars.ts: the order of llms-full.txt. Pages it doesn't list go last. */
+function sidebarOrder() {
+  const text = readFileSync(join(DOCS, "sidebars.ts"), "utf8");
+  return [...text.matchAll(/'([a-z0-9-]+(?:\/[a-z0-9-]+)*)'/g)].map((m) => m[1]).filter((id) => id !== "category" && id !== "docs");
+}
+
+/** Split a content file into its front matter fields and its body. */
+function parseContent(text) {
+  const m = /^---\n([\s\S]*?)\n---\n?/.exec(text);
+  const fields = {};
+  if (m) {
+    for (const line of m[1].split("\n")) {
+      const kv = /^([a-z_]+):\s*(.*)$/.exec(line);
+      if (kv) fields[kv[1]] = kv[2].replace(/^"(.*)"$/, "$1").replace(/\\"/g, '"');
+    }
+  }
+  return { fields, body: m ? text.slice(m[0].length) : text };
+}
+
+/** A page path as the site serves it, with the trailing slash (docusaurus.config.ts trailingSlash): "/a#b" → "/a/#b". */
+function withSlash(path) {
+  const [page, anchor] = path.split("#");
+  const slashed = page.endsWith("/") || /\.[a-z0-9]+$/i.test(page) ? page : `${page}/`;
+  return slashed + (anchor ? `#${anchor}` : "");
+}
+
+/** Site paths become full URLs: a markdown file read on its own has no site to be relative to. */
+function absoluteLinks(text) {
+  let fenced = false;
+  return text
+    .split("\n")
+    .map((line) => {
+      if (/^\s*(```|~~~)/.test(line)) fenced = !fenced;
+      if (fenced) return line;
+      return line.replace(/\]\((\/[^)\s]*)\)/g, (_m, path) => `](${SITE}${withSlash(path)})`);
+    })
+    .join("\n");
+}
+
+function contentFiles(dir) {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? contentFiles(join(dir, e.name)) : e.name.endsWith(".md") ? [join(dir, e.name)] : []
+  );
+}
+
+rmSync(GENERATED, { recursive: true, force: true });
+mkdirSync(GENERATED, { recursive: true });
+
+const machinePages = contentFiles(OUT).map((file) => {
+  const id = relative(OUT, file).replace(/\\/g, "/").replace(/\.md$/, "");
+  const { fields, body } = parseContent(readFileSync(file, "utf8"));
+  const slug = fields.slug ?? `/${id}`;
+  const url = `${SITE}${withSlash(slug)}`;
+  const markdown = [
+    `<!-- ${fields.title ?? id}. Page: ${url}${fields.custom_edit_url ? ` · Source: ${fields.custom_edit_url}` : ""} -->`,
+    "",
+    absoluteLinks(body).trim(),
+    "",
+  ].join("\n");
+  const dest = join(GENERATED, `${id}.md`);
+  mkdirSync(dirname(dest), { recursive: true });
+  writeFileSync(dest, markdown);
+  return { id, title: fields.title ?? id, description: fields.description ?? "", url, markdown };
+});
+
+const order = sidebarOrder();
+const rank = (id) => (order.includes(id) ? order.indexOf(id) : order.length);
+machinePages.sort((a, b) => rank(a.id) - rank(b.id) || a.id.localeCompare(b.id));
+
+writeFileSync(
+  join(GENERATED, "llms-full.txt"),
+  [
+    "# HITZ Protocol: the complete documentation",
+    "",
+    "> Every page of docs.skyhitz.io in one file, for language models and agents. HITZ Protocol is an oracle-free financial primitive on Stellar mainnet (Soroban), built by Skyhitz: the Sovereign Vault, HITZ's own exchange, owns its liquidity and prices it by arbitrage with no oracle, and the HITZ token bounds how much one account can hold and still move freely. Index: https://docs.skyhitz.io/llms.txt. To trade from code or an agent: https://skyhitz.io/integrate/.",
+    "",
+    "## Pages",
+    "",
+    ...machinePages.map((p) => `- [${p.title}](${p.url})${p.description ? `: ${p.description}` : ""}`),
+    "",
+    ...machinePages.flatMap((p) => ["---", "", p.markdown]),
+  ].join("\n")
+);
+
+// static/llms.txt is written by hand. Every docs link in it must be a page, a page's markdown or a generated file.
+const known = new Set([
+  `${SITE}/`,
+  `${SITE}/llms-full.txt`,
+  ...machinePages.flatMap((p) => [p.url, `${SITE}/${p.id}.md`]),
+]);
+const llmsTxt = readFileSync(join(DOCS, "static", "llms.txt"), "utf8");
+const unknown = [...llmsTxt.matchAll(/https:\/\/docs\.skyhitz\.io[^\s)]*/g)].map((m) => m[0].replace(/[.,;:]+$/, "")).filter((u) => !known.has(u));
+if (unknown.length) {
+  throw new Error(`static/llms.txt links to ${[...new Set(unknown)].join(", ")}, which this site doesn't publish`);
+}
+
+console.log(`[sync] ${machinePages.length} pages as markdown and llms-full.txt → generated/`);

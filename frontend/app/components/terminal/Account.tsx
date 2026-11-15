@@ -7,8 +7,8 @@
  * House style: no em-dashes.
  */
 import { useState } from "react";
-import * as StellarSdk from "@stellar/stellar-sdk";
 import { useWallet } from "../../contexts/WalletContext";
+import { loadSdk } from "../../lib/sdk";
 import { NETWORK_PASSPHRASE } from "../../lib/stellar";
 import * as api from "../../lib/terminal";
 import type { Me, PlanId, PublicPlan } from "../../lib/terminal";
@@ -60,7 +60,8 @@ function PlanCard({ plan, me, yearly, onPaid }: { plan: PublicPlan; me: Me | nul
       let proof: { xdr?: string; tx_hash?: string };
       if (connectionType === "email") {
         setStep({ kind: "working", text: `Paying ${c.pay.amount} ${c.pay.asset}` });
-        const args = c.gateway_call.argsXdr.map((a) => StellarSdk.xdr.ScVal.fromXDR(a, "base64"));
+        const sdk = await loadSdk();
+        const args = c.gateway_call.argsXdr.map((a) => sdk.xdr.ScVal.fromXDR(a, "base64"));
         const res = await callContract(c.gateway_call.contractId, c.gateway_call.method, args);
         if (!res.success || !res.hash) throw new Error(res.error ?? "The payment did not go through.");
         proof = { tx_hash: res.hash };

@@ -16,7 +16,7 @@
     "@stellar/freighter-api": "^6.0.1",
     "@stellar/stellar-sdk": "^15.0.1",
     "mimetext": "^3.0.28",
-    "next": "16.2.3",
+    "next": "16.4.6",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "three": "^0.184.0"

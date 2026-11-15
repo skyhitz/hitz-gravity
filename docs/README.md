@@ -26,6 +26,25 @@ else to the file on GitHub.
 - Routes of the archived v1 docs redirect to `/history/skyhitz-v1`
   (`docusaurus.config.ts`).
 
+## For search engines, assistants and agents
+
+- The sync also writes every page as plain markdown into `generated/`
+  (git-ignored, served next to `static/`): `/whitepaper.md`,
+  `/vault/integration.md` and so on, and all of them in one file,
+  `/llms-full.txt`. `static/llms.txt` is the hand-written index that links
+  to them; the sync fails if it names a page the site doesn't publish.
+- `static/robots.txt` welcomes every crawler, AI crawlers by name, and
+  points to the sitemap. `static/_headers` sets the security headers and
+  lets browsers keep the hashed files under `/assets/` for a year.
+- Pages are served at their trailing-slash URL (`trailingSlash: true`), so
+  canonical links and the sitemap name the URL that answers, not one that
+  redirects.
+- The whitepaper is also published, designed, at
+  [skyhitz.io/whitepaper](https://skyhitz.io/whitepaper/). That page is the
+  canonical one: `PAGES` gives the docs copy a `canonical` pointing to it
+  (`src/theme/DocItem/Metadata` writes the link), and it is left out of this
+  site's sitemap.
+
 ## Dev
 
 ```bash

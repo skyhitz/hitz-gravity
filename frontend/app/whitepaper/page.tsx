@@ -19,20 +19,79 @@
  */
 import type { Metadata } from "next";
 import Link from "next/link";
+import JsonLd from "../components/JsonLd";
+import { ORG_ID, SITE_ID, breadcrumb, graph, organization, website } from "../lib/schema";
+import { pageMetadata } from "../lib/seo";
+import { OG_IMAGE, PROTOCOL_NAME, TAGLINE, pageUrl } from "../lib/site";
 import { CONTRACT_ID } from "../lib/stellar";
 import { VAULT_ID } from "../lib/vault";
 
-export const metadata: Metadata = {
-  title: "HITZ Protocol. Whitepaper",
-  description:
-    "How HITZ Protocol provides liquidity without mercenary LPs or oracles: the Sovereign Vault, its dislocation fee, and the HITZ token's Event Horizon.",
-};
+const PATH = "/whitepaper/";
+const TITLE = "HITZ Protocol whitepaper. Liquidity without LPs or oracles";
+const DESCRIPTION =
+  "How HITZ Protocol provides liquidity on Stellar without mercenary LPs or oracles: the Sovereign Vault, its dislocation fee and the token's Event Horizon.";
+/** Shown in the page's header, and the version the structured data states. */
+const VERSION = "7.0";
+
+export const metadata: Metadata = pageMetadata({ title: TITLE, description: DESCRIPTION, path: PATH, type: "article" });
+
+const structuredData = graph(
+  organization,
+  website,
+  {
+    "@type": "TechArticle",
+    "@id": `${pageUrl(PATH)}#article`,
+    headline: `${PROTOCOL_NAME} whitepaper`,
+    alternativeHeadline: TAGLINE,
+    description: DESCRIPTION,
+    url: pageUrl(PATH),
+    mainEntityOfPage: pageUrl(PATH),
+    image: OG_IMAGE.url,
+    version: VERSION,
+    dateModified: "2026-11",
+    inLanguage: "en",
+    isPartOf: { "@id": SITE_ID },
+    author: { "@id": ORG_ID },
+    publisher: { "@id": ORG_ID },
+    about: [
+      "Protocol-owned liquidity",
+      "Automated market makers without price oracles",
+      "Stellar Soroban smart contracts",
+    ],
+  },
+  breadcrumb("Whitepaper", PATH)
+);
 
 const GITHUB = "https://github.com/skyhitz/hitz-gravity/blob/main";
+
+/** The sections, in order: the page's contents list and each section's anchor. */
+const SECTIONS: [number: string, title: string][] = [
+  ["I", "The Liquidity Problem"],
+  ["II", "The Closed Loop"],
+  ["III", "The Sovereign Vault"],
+  ["IV", "The Event Horizon"],
+  ["V", "Pools and Routers"],
+  ["VI", "Transfer Rules"],
+  ["VII", "Supply"],
+  ["VIII", "Admin, Timelocks and Decentralization"],
+  ["IX", "On-Chain Implementation"],
+  ["X", "State Archival (TTL)"],
+  ["XI", "Security Properties"],
+  ["XII", "Known Limits"],
+  ["XIII", "Deployed Contracts"],
+];
+
+/** "Admin, Timelocks and Decentralization" → "admin-timelocks-and-decentralization". */
+const anchor = (title: string) =>
+  title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
 
 export default function Whitepaper() {
   return (
     <div className="min-h-screen bg-background text-foreground">
+      <JsonLd data={structuredData} />
       {/* Nav */}
       <nav className="sticky top-0 z-10 border-b border-border bg-background/80 backdrop-blur-md">
         <div className="max-w-3xl mx-auto px-6 h-12 flex items-center justify-between">
@@ -42,7 +101,7 @@ export default function Whitepaper() {
           >
             ← Home
           </Link>
-          <span className="text-xs text-muted font-mono">v7.0 · November 2026</span>
+          <span className="text-xs text-muted font-mono">v{VERSION} · November 2026</span>
         </div>
       </nav>
 
@@ -74,6 +133,21 @@ export default function Whitepaper() {
             protocol&apos;s pools, can send HITZ only back into a pool.
           </p>
         </header>
+
+        {/* Contents: a link to every section */}
+        <nav aria-label="Contents" className="border border-border rounded-2xl bg-card p-5">
+          <p className="text-xs text-muted uppercase tracking-widest mb-3">Contents</p>
+          <ol className="grid sm:grid-cols-2 gap-x-8 gap-y-1.5 text-sm">
+            {SECTIONS.map(([number, title]) => (
+              <li key={number} className="flex gap-2">
+                <span className="text-muted font-mono text-xs w-8 shrink-0 pt-0.5">{number}.</span>
+                <a href={`#${anchor(title)}`} className="text-muted hover:text-foreground transition-colors">
+                  {title}
+                </a>
+              </li>
+            ))}
+          </ol>
+        </nav>
 
         {/* I. The Liquidity Problem */}
         <Section number="I" title="The Liquidity Problem">
@@ -893,7 +967,7 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="space-y-4">
+    <section id={anchor(title)} className="space-y-4 scroll-mt-20">
       <div className="flex items-baseline gap-3">
         <span className="text-muted font-mono text-sm">{number}.</span>
         <h2 className="text-xl font-semibold tracking-tight">{title}</h2>

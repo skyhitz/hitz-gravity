@@ -310,7 +310,7 @@ export default function VaultSwap() {
     if (!publicKey || confirmedOut === null || inStroops <= 0n) return;
     setTx({ status: "signing" });
     try {
-      const call = swapCall({ account: publicKey, tokenIn, tokenOut, amountIn: inStroops, expectedOut: confirmedOut, slippageBps });
+      const call = await swapCall({ account: publicKey, tokenIn, tokenOut, amountIn: inStroops, expectedOut: confirmedOut, slippageBps });
       const res = await callContract(call.contractId, call.method, call.args);
       if (res.success && res.hash) {
         setTx({ status: "success", hash: res.hash });
@@ -434,7 +434,16 @@ export default function VaultSwap() {
             <span className="lbl">Slippage tolerance</span>
             <span className="val">{(slippageBps / 100).toFixed(2)}%</span>
           </div>
-          <input type="range" min={10} max={300} step={10} value={slippageBps} onChange={(e) => setSlippageBps(Number(e.target.value))} />
+          <input
+            type="range"
+            aria-label="Slippage tolerance"
+            aria-valuetext={`${(slippageBps / 100).toFixed(2)}%`}
+            min={10}
+            max={300}
+            step={10}
+            value={slippageBps}
+            onChange={(e) => setSlippageBps(Number(e.target.value))}
+          />
           <div className="slippage-ticks">
             <span>0.10%</span>
             <span>1.50%</span>

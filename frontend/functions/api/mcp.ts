@@ -18,7 +18,15 @@ import {
   transactionStatus,
   vaultInfo,
 } from "../_lib/vault-api";
+import { BodyTooLarge, readText } from "../_lib/guard";
 import type { Env } from "../_lib/types";
+
+/**
+ * Messages answered per request. Batches left the protocol in 2025-06-18;
+ * older clients send a few at most. Each tool call makes requests of its own
+ * to the Stellar network, so one POST must not be able to ask for hundreds.
+ */
+const MAX_BATCH = 10;
 
 const SUPPORTED_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
@@ -216,7 +224,7 @@ async function callTool(env: Env, params: Record<string, unknown>) {
     const payload =
       err instanceof ApiError
         ? { error: err.message, code: err.code, ...(err.details ?? {}) }
-        : { error: err instanceof Error ? err.message : String(err), code: "internal_error" };
+        : { error: "Something went wrong on our side. Try again shortly.", code: "internal_error" };
     if (!(err instanceof ApiError)) console.error("[mcp]", params.name, err);
     return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }], isError: true };
   }
@@ -265,22 +273,28 @@ async function handle(env: Env, message: unknown): Promise<Record<string, unknow
     }
     return { jsonrpc: "2.0", id, result };
   } catch (err) {
-    const code = err instanceof RpcError ? err.code : -32603;
-    const text = err instanceof Error ? err.message : String(err);
-    return { jsonrpc: "2.0", id, error: { code, message: text } };
+    if (err instanceof RpcError) return { jsonrpc: "2.0", id, error: { code: err.code, message: err.message } };
+    console.error("[mcp]", method, err);
+    return { jsonrpc: "2.0", id, error: { code: -32603, message: "Internal error" } };
   }
 }
 
 export async function POST(request: Request, env: Env): Promise<Response> {
   let payload: unknown;
   try {
-    payload = await request.json();
-  } catch {
+    payload = JSON.parse(await readText(request));
+  } catch (err) {
+    if (err instanceof BodyTooLarge) {
+      return reply({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "Request too large" } }, 413);
+    }
     return reply({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }, 400);
   }
   const batch = Array.isArray(payload);
   const messages = batch ? (payload as unknown[]) : [payload];
   if (!messages.length) return reply({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid Request" } }, 400);
+  if (messages.length > MAX_BATCH) {
+    return reply({ jsonrpc: "2.0", id: null, error: { code: -32600, message: `Batch too large: send at most ${MAX_BATCH} messages per request.` } }, 400);
+  }
   const answers = (await Promise.all(messages.map((m) => handle(env, m)))).filter((a): a is Record<string, unknown> => a !== null);
   if (!answers.length) return new Response(null, { status: 202, headers: CORS });
   return reply(batch ? answers : answers[0]);

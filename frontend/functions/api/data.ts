@@ -26,6 +26,9 @@ import { badRequest } from "../_lib/http";
 import { arbRunsPage, poolReservesPage } from "../_lib/report-data";
 import type { Env } from "../_lib/types";
 
+/** The query parameters a paged route reads: its cache key (cache.ts). */
+const PAGE_PARAMS = ["after", "limit"] as const;
+
 function pageParams(request: Request, max: number): { after: string; limit: number } | null {
   const url = new URL(request.url);
   const limit = Number(url.searchParams.get("limit") ?? max);
@@ -57,7 +60,8 @@ export async function GET_EVENTS(request: Request, env: Env, ctx: ExecutionConte
       return { events, next: events.length === page.limit ? events[events.length - 1].id : null };
     },
     // Full pages sit behind the tip and only change if history is re-imported.
-    (body) => (body.next ? 3600 : 60)
+    (body) => (body.next ? 3600 : 60),
+    PAGE_PARAMS
   );
 }
 
@@ -75,7 +79,8 @@ export async function GET_TX_INFO(request: Request, env: Env, ctx: ExecutionCont
       for (const r of results) items[r.hash] = JSON.parse(r.info);
       return { items, next: results.length === page.limit ? results[results.length - 1].hash : null };
     },
-    300
+    300,
+    PAGE_PARAMS
   );
 }
 
@@ -106,7 +111,8 @@ export async function GET_POOL_RESERVES(request: Request, env: Env, ctx: Executi
     ctx,
     () => poolReservesPage(env.DB, pool, page.after, page.limit),
     // Full pages sit behind the tip and never change.
-    (body) => (body.next ? 3600 : 60)
+    (body) => (body.next ? 3600 : 60),
+    ["pool", ...PAGE_PARAMS]
   );
 }
 
@@ -120,7 +126,8 @@ export async function GET_ARB_RUNS(request: Request, env: Env, ctx: ExecutionCon
     request,
     ctx,
     () => arbRunsPage(env.DB, after, limit),
-    (body) => (body.next ? 3600 : 60)
+    (body) => (body.next ? 3600 : 60),
+    PAGE_PARAMS
   );
 }
 

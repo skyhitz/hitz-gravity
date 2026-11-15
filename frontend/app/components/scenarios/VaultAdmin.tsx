@@ -93,14 +93,14 @@ export default function VaultAdmin({ publicKey }: { publicKey: string | null }) 
   const deposit = useCallback(async () => {
     if (!publicKey || !pool || hitz <= 0n) return;
     setTx({ status: "signing" });
-    const call = depositCall({
-      account: publicKey,
-      asset: pool.asset,
-      hitz,
-      minAmount: (amount * (10_000n - TOLERANCE_BPS)) / 10_000n,
-      maxAmount: (amount * (10_000n + TOLERANCE_BPS)) / 10_000n + 1n,
-    });
     try {
+      const call = await depositCall({
+        account: publicKey,
+        asset: pool.asset,
+        hitz,
+        minAmount: (amount * (10_000n - TOLERANCE_BPS)) / 10_000n,
+        maxAmount: (amount * (10_000n + TOLERANCE_BPS)) / 10_000n + 1n,
+      });
       const res = await callContract(call.contractId, call.method, call.args);
       if (res.success && res.hash) {
         setTx({ status: "done", hash: res.hash });

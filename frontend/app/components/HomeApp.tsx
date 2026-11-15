@@ -1,11 +1,20 @@
 "use client";
 
 /**
- * Home — tabs layout (Trade / Vault / Monitor / Admin).
+ * HomeApp — the app on the home page: tabs layout (Trade / Vault / Monitor /
+ * Admin). The page itself (app/(app)/page.tsx) is a server component that
+ * renders this and passes the written part of the page (what HITZ Protocol
+ * is, how it works, questions) as `children`, so that text is in the HTML
+ * and costs no JavaScript.
  *
  * Trade swaps through the Sovereign Vault (components/VaultSwap). The Vault
  * tab is about the account's own gravity: free accounts get the send-to-
  * email card, vaulted ones the sell-to-release card.
+ *
+ * Only the Trade tab is in the first load. The Vault, Monitor and Admin
+ * panels are fetched when their tab is first opened (and a moment earlier,
+ * when the pointer reaches the tab), so a visitor who came to trade or to
+ * read doesn't download the charts, the send form or the admin tools.
  *
  * Routing is intentionally local state: the tab choice is ephemeral and
  * shouldn't pollute the URL or survive reloads. The one exception is when
@@ -18,28 +27,42 @@
  * panel body keeps all three visible, matching the reordered-HTML design.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
-import WalletButton from "./components/WalletButton";
-import PulseBar from "./components/PulseBar";
-import AccountPulse from "./components/AccountPulse";
-import AccountInspector from "./components/AccountInspector";
-import VaultSwap from "./components/VaultSwap";
-import ReleaseCard from "./components/ReleaseCard";
-import SendToEmail from "./components/SendToEmail";
-import MonitorStatCards from "./components/MonitorStatCards";
-import HolderEcosystem from "./components/ecosystem/HolderEcosystem";
-import HitzPriceCard from "./components/HitzPriceCard";
-import LiquidityCard from "./components/LiquidityCard";
-import TractionCard from "./components/TractionCard";
-import RegistryCardPair from "./components/Registry";
-import AdminTab from "./components/AdminTab";
-import ConsentModal, { CONSENT_KEY } from "./components/ConsentModal";
-import { CONTRACT_ID, getAdmin } from "./lib/stellar";
-import { useWallet } from "./contexts/WalletContext";
-import { useProtocol } from "./contexts/ProtocolContext";
+import WalletButton from "./WalletButton";
+import PulseBar from "./PulseBar";
+import VaultSwap from "./VaultSwap";
+import ConsentModal from "./ConsentModal";
+import { CONSENT_KEY } from "../lib/consent";
+import { CONTRACT_ID, getAdmin } from "../lib/stellar";
+import { useWallet } from "../contexts/WalletContext";
+import { useProtocol } from "../contexts/ProtocolContext";
+
+/** Shown in a panel's place for the moment its code takes to arrive. */
+function PanelLoading() {
+  return <div className="side-card shimmer" style={{ height: 220 }} role="status" aria-label="Loading" />;
+}
+
+// The panels behind the other tabs, each in its own chunk, fetched when its
+// tab is first shown. (The import() is written inside dynamic(), as Next asks.)
+const VaultPanel = dynamic(() => import("./VaultPanel"), { loading: PanelLoading });
+const MonitorPanel = dynamic(() => import("./MonitorPanel"), { loading: PanelLoading });
+const AdminTab = dynamic(() => import("./AdminTab"), { loading: PanelLoading });
 
 type Tab = "trade" | "vault" | "monitor" | "admin";
+
+// The same chunks, by tab: importing one ahead of the click starts its download.
+const PRELOAD: Partial<Record<Tab, () => Promise<unknown>>> = {
+  vault: () => import("./VaultPanel"),
+  monitor: () => import("./MonitorPanel"),
+  admin: () => import("./AdminTab"),
+};
+
+/** Start fetching a tab's panel; harmless to call again, and a failure here is retried on click. */
+function preload(tab: Tab): void {
+  PRELOAD[tab]?.().catch(() => {});
+}
 
 const ALL_TABS: { key: Tab; label: string; icon: string }[] = [
   { key: "trade", label: "Trade", icon: "◈" },
@@ -48,7 +71,7 @@ const ALL_TABS: { key: Tab; label: string; icon: string }[] = [
   { key: "admin", label: "Admin", icon: "⚙" },
 ];
 
-export default function Home() {
+export default function HomeApp({ children }: { children?: ReactNode }) {
   const { publicKey } = useWallet();
   const { vaulted } = useProtocol();
 
@@ -127,9 +150,10 @@ export default function Home() {
       {/* ── Sticky nav ────────────────────────────────────────────────── */}
       <nav className="nav">
         <div className="nav-inner">
+          {/* The brand, not the page's heading: the h1 is in the written part below. */}
           <div className="logo">
             <span className="logo-mark" aria-hidden />
-            <h1>SKYHITZ</h1>
+            <span className="logo-name">SKYHITZ</span>
           </div>
           <div className="nav-right">
             <Link href="/terminal/" className="nav-link">
@@ -160,6 +184,9 @@ export default function Home() {
                 aria-selected={active}
                 className={active ? "active" : ""}
                 onClick={() => setTab(key)}
+                onPointerEnter={() => preload(key)}
+                onFocus={() => preload(key)}
+                onTouchStart={() => preload(key)}
               >
                 <span className="tab-ico" aria-hidden>
                   {icon}
@@ -209,6 +236,9 @@ export default function Home() {
           {tab === "monitor" && <MonitorPanel />}
           {tab === "admin" && <AdminTab />}
         </div>
+
+        {/* What HITZ Protocol is, how it works, questions: server-rendered. */}
+        {children}
       </main>
 
       {/* ── Footer ────────────────────────────────────────────────────── */}
@@ -220,9 +250,10 @@ export default function Home() {
             {CONTRACT_ID}
           </p>
           <div className="footer-links">
-            <Link href="/whitepaper">Whitepaper</Link>
+            <Link href="/whitepaper/">Whitepaper</Link>
             <Link href="/terminal/">Terminal</Link>
             <Link href="/integrate/">API &amp; MCP</Link>
+            <a href="https://docs.skyhitz.io/">Docs</a>
             <a
               href="https://github.com/skyhitz/hitz-gravity"
               target="_blank"
@@ -261,76 +292,5 @@ function TradePanel() {
         Trading from a bot or an AI agent? <Link href="/integrate/">Use the API or the MCP server →</Link>
       </p>
     </>
-  );
-}
-
-function VaultPanel({ vaulted }: { vaulted: boolean | null }) {
-  const { publicKey } = useWallet();
-  if (vaulted === true) {
-    return <ReleaseCard />;
-  }
-  // Safe-orbit empty state (and fallback when no wallet connected). The
-  // SendToEmail card sits directly below because this is the first tab a
-  // new user lands on when they're NOT mid-trade, and "send to an email"
-  // is a natural next step after signing in.
-  //
-  // Gating: only signed-in users (wallet OR email session) see SendToEmail.
-  // A disconnected visitor has no `from` account to transfer from, so the
-  // card would be a dead-end input. Vaulted users are handled above.
-  return (
-    <div
-      style={{ display: "grid", gridTemplateColumns: "1fr", gap: 16 }}
-    >
-      <div className="empty-state">
-        <div className="glyph" aria-hidden>
-          <svg
-            width="22"
-            height="22"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <circle cx="12" cy="12" r="9" />
-            <circle cx="12" cy="12" r="3" />
-          </svg>
-        </div>
-        <div className="eyebrow">Safe Orbit</div>
-        <h2>You&apos;re free to move.</h2>
-        <p>
-          Your balance is below the Event Horizon: you can send HITZ anywhere
-          and trade freely. If a purchase ever takes you over L you&apos;ll be
-          Vaulted, and this tab will show how much to sell into the vault to
-          get free again.
-        </p>
-      </div>
-      {publicKey && <SendToEmail />}
-    </div>
-  );
-}
-
-function MonitorPanel() {
-  return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "1fr",
-        gap: 16,
-      }}
-    >
-      <HolderEcosystem />
-      <HitzPriceCard />
-      <LiquidityCard />
-      <TractionCard />
-      <MonitorStatCards />
-      <AccountPulse />
-      <RegistryCardPair />
-      <div className="side-card">
-        <h4>Inspect Account</h4>
-        <AccountInspector />
-      </div>
-    </div>
   );
 }

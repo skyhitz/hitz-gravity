@@ -1,0 +1,56 @@
+# skyhitz.io: HITZ Protocol, oracle-free, protocol-owned liquidity on Stellar.
+#
+# Everything public here is open to every crawler: search engines, AI search,
+# assistants fetching a page for someone, and crawlers collecting training
+# data. A summary written for language models is at /llms.txt, and the whole
+# of the documentation in one file at https://docs.skyhitz.io/llms-full.txt.
+#
+# This site's content may be used for search, as input to AI answers, and to
+# train AI models (in the terms of https://contentsignals.org: search=yes,
+# ai-input=yes, ai-train=yes). It is stated here in words, not as a
+# Content-Signal line, because robots.txt validators reject directives they
+# don't know.
+#
+# The only paths closed are the app's own account endpoints: they answer a
+# signed-in browser, not a crawler. The public API (/api/v1), its OpenAPI
+# description and the MCP server (/mcp) are open.
+
+User-agent: *
+Allow: /
+Disallow: /api/auth/
+Disallow: /api/gateway/
+Disallow: /api/admin/
+
+# AI crawlers and agents, by name. A crawler follows the group that names it
+# and ignores the one above, so the same rules are repeated here: an explicit
+# welcome for the crawlers that look for one.
+User-agent: GPTBot
+User-agent: OAI-SearchBot
+User-agent: ChatGPT-User
+User-agent: ClaudeBot
+User-agent: Claude-User
+User-agent: Claude-SearchBot
+User-agent: anthropic-ai
+User-agent: Claude-Web
+User-agent: PerplexityBot
+User-agent: Perplexity-User
+User-agent: Google-Extended
+User-agent: GoogleOther
+User-agent: Applebot-Extended
+User-agent: Amazonbot
+User-agent: meta-externalagent
+User-agent: Meta-ExternalFetcher
+User-agent: Bytespider
+User-agent: CCBot
+User-agent: Diffbot
+User-agent: DuckAssistBot
+User-agent: MistralAI-User
+User-agent: cohere-ai
+User-agent: YouBot
+User-agent: omgili
+Allow: /
+Disallow: /api/auth/
+Disallow: /api/gateway/
+Disallow: /api/admin/
+
+Sitemap: https://skyhitz.io/sitemap.xml

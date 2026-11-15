@@ -13,9 +13,15 @@
 //   `out/.well-known/`, preserving structure. Idempotent — safe to
 //   re-run; existing files are overwritten.
 //
+//   One file is stamped on the way: security.txt (RFC 9116) must carry an
+//   `Expires` date less than a year ahead, and a file that has expired tells
+//   researchers the contact is stale. The copy in out/ gets a date eleven
+//   months from the build, so it stays valid for as long as the site is
+//   being deployed at all.
+//
 // Run automatically as part of `pnpm build` (chained after `next build`).
 
-import { cpSync, existsSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -31,3 +37,13 @@ if (!existsSync(src)) {
 
 cpSync(src, dst, { recursive: true });
 console.log(`[copy-well-known] copied ${src} → ${dst}`);
+
+const securityTxt = join(dst, "security.txt");
+if (existsSync(securityTxt)) {
+  const expires = new Date(Date.now() + 335 * 86_400_000);
+  expires.setUTCHours(0, 0, 0, 0);
+  const text = readFileSync(securityTxt, "utf8");
+  if (!/^Expires: .*$/m.test(text)) throw new Error("[copy-well-known] security.txt has no Expires line to refresh");
+  writeFileSync(securityTxt, text.replace(/^Expires: .*$/m, `Expires: ${expires.toISOString()}`));
+  console.log(`[copy-well-known] security.txt expires ${expires.toISOString()}`);
+}

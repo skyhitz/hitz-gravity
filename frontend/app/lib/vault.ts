@@ -12,21 +12,24 @@
  * Contract reference: contracts/sovereign-vault/INTEGRATION.md.
  */
 
-import * as StellarSdk from "@stellar/stellar-sdk";
+// Types only: the SDK itself is loaded on demand (sdk.ts).
+import type * as StellarSdk from "@stellar/stellar-sdk";
 import { simulate } from "./stellar";
 import { HITZ_ADDRESS } from "./tokens";
 import { applySlippage } from "./swap";
+import { loadSdk, toHex, type Sdk } from "./sdk";
 import type { PoolState } from "./vaultMath";
 
 export const VAULT_ID = "CDEISYZM526FZJ4PDWNVKD7UHXFO4ATT46K47YTUQAOLWZQV64ANNBWU";
 
-const addr = (a: string) => StellarSdk.Address.fromString(a).toScVal();
-const i128 = (v: bigint) => StellarSdk.nativeToScVal(v, { type: "i128" });
+const addr = (sdk: Sdk, a: string) => sdk.Address.fromString(a).toScVal();
+const i128 = (sdk: Sdk, v: bigint) => sdk.nativeToScVal(v, { type: "i128" });
 const big = (v: unknown): bigint => BigInt(v as bigint | number | string);
 
 /** Every pool, in listing order, brought up to the current ledger time. */
 export async function readPools(): Promise<PoolState[]> {
-  const raw = StellarSdk.scValToNative(await simulate(VAULT_ID, "pools")) as Record<string, unknown>[];
+  const sdk = await loadSdk();
+  const raw = sdk.scValToNative(await simulate(VAULT_ID, "pools")) as Record<string, unknown>[];
   return raw.map((p) => ({
     asset: String(p.asset),
     hitz: big(p.hitz),
@@ -39,7 +42,8 @@ export async function readPools(): Promise<PoolState[]> {
 
 /** What `swap` would pay out right now (the contract's own `quote`). */
 export async function quoteOnChain(tokenIn: string, tokenOut: string, amountIn: bigint): Promise<bigint> {
-  return big(StellarSdk.scValToNative(await simulate(VAULT_ID, "quote", [addr(tokenIn), addr(tokenOut), i128(amountIn)])));
+  const sdk = await loadSdk();
+  return big(sdk.scValToNative(await simulate(VAULT_ID, "quote", [addr(sdk, tokenIn), addr(sdk, tokenOut), i128(sdk, amountIn)])));
 }
 
 export interface VaultStatus {
@@ -51,9 +55,10 @@ export interface VaultStatus {
 }
 
 export async function readVaultStatus(): Promise<VaultStatus> {
+  const sdk = await loadSdk();
   const [admin, upgradable, upgrade, listing] = await Promise.all(
     ["admin", "upgradable", "pending_upgrade", "pending_listing"].map(async (m) =>
-      StellarSdk.scValToNative(await simulate(VAULT_ID, m))
+      sdk.scValToNative(await simulate(VAULT_ID, m))
     )
   );
   const u = upgrade as { wasm_hash: Uint8Array; eta: bigint } | null | undefined;
@@ -61,7 +66,7 @@ export async function readVaultStatus(): Promise<VaultStatus> {
   return {
     admin: (admin as string | null | undefined) ?? null,
     upgradable: upgradable === true,
-    pendingUpgrade: u ? { wasmHash: Buffer.from(u.wasm_hash).toString("hex"), eta: Number(u.eta) } : null,
+    pendingUpgrade: u ? { wasmHash: toHex(u.wasm_hash), eta: Number(u.eta) } : null,
     pendingListing: l ? { asset: String(l.asset), eta: Number(l.eta) } : null,
   };
 }
@@ -74,7 +79,7 @@ export interface ContractCall {
 }
 
 /** `swap(from, to, token_in, token_out, amount_in, min_out)`, paying out to the signer. */
-export function swapCall(args: {
+export async function swapCall(args: {
   account: string;
   tokenIn: string;
   tokenOut: string;
@@ -82,12 +87,20 @@ export function swapCall(args: {
   /** The quoted output; `min_out` is this minus the slippage budget. */
   expectedOut: bigint;
   slippageBps: number;
-}): ContractCall {
+}): Promise<ContractCall> {
+  const sdk = await loadSdk();
   const minOut = applySlippage(args.expectedOut, args.slippageBps);
   return {
     contractId: VAULT_ID,
     method: "swap",
-    args: [addr(args.account), addr(args.account), addr(args.tokenIn), addr(args.tokenOut), i128(args.amountIn), i128(minOut)],
+    args: [
+      addr(sdk, args.account),
+      addr(sdk, args.account),
+      addr(sdk, args.tokenIn),
+      addr(sdk, args.tokenOut),
+      i128(sdk, args.amountIn),
+      i128(sdk, minOut),
+    ],
   };
 }
 
@@ -96,17 +109,18 @@ export function swapCall(args: {
  * asset's pool at its current ratio. Anyone can; there are no shares and no
  * withdrawals. The bounds cap the price the deposit accepts.
  */
-export function depositCall(args: {
+export async function depositCall(args: {
   account: string;
   asset: string;
   hitz: bigint;
   minAmount: bigint;
   maxAmount: bigint;
-}): ContractCall {
+}): Promise<ContractCall> {
+  const sdk = await loadSdk();
   return {
     contractId: VAULT_ID,
     method: "deposit",
-    args: [addr(args.account), addr(args.asset), i128(args.hitz), i128(args.minAmount), i128(args.maxAmount)],
+    args: [addr(sdk, args.account), addr(sdk, args.asset), i128(sdk, args.hitz), i128(sdk, args.minAmount), i128(sdk, args.maxAmount)],
   };
 }
 

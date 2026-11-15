@@ -14,7 +14,7 @@ export function baseEmail(heading: string, bodyHtml: string): string {
           ${bodyHtml}
         </td></tr>
       </table>
-      <p style="margin:16px 0 0;color:#5a5f6a;font-size:11px;">© HITZ · Gravity Protocol</p>
+      <p style="margin:16px 0 0;color:#5a5f6a;font-size:11px;">© Skyhitz · HITZ Protocol</p>
     </td></tr>
   </table>
 </body></html>`;

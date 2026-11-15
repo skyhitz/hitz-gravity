@@ -4,13 +4,16 @@
  */
 import type { Metadata } from "next";
 import Link from "next/link";
-import SignTransaction from "../components/SignTransaction";
+import SignTransaction from "../../components/SignTransaction";
+import { pageMetadata } from "../../lib/seo";
 
-export const metadata: Metadata = {
+// A page for one transaction, reached from a link: not one for a search index.
+export const metadata: Metadata = pageMetadata({
   title: "Sign a HITZ vault transaction",
   description: "Review a HITZ Sovereign Vault swap built by the API or an AI agent, and sign it with your own wallet.",
-  robots: { index: false },
-};
+  path: "/sign/",
+  index: false,
+});
 
 export default function SignPage() {
   return (

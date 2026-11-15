@@ -18,13 +18,14 @@
  * so dormant launch-week holders still appear with their real balance.
  */
 
-import * as StellarSdk from "@stellar/stellar-sdk";
+import type * as StellarSdk from "@stellar/stellar-sdk";
 import { CONTRACT_ID, RPC_URL, getAdmin } from "./stellar";
 import { VAULT_ID, readPools } from "./vault";
 import { getTokenInfos } from "./tokens";
 import { apiBase } from "./api";
+import { loadSdk, type Sdk } from "./sdk";
 
-const server = new StellarSdk.rpc.Server(RPC_URL);
+let rpcServer: StellarSdk.rpc.Server | null = null;
 
 /** Soroban RPC caps `getLedgerEntries` at 200 keys per request. */
 const LEDGER_KEYS_PER_REQUEST = 200;
@@ -74,15 +75,15 @@ export interface HolderStateSnapshot {
   latestLedger: number;
 }
 
-function dataKey(kind: "Balance" | "Vaulted", address: string): StellarSdk.xdr.LedgerKey {
-  return StellarSdk.xdr.LedgerKey.contractData(
-    new StellarSdk.xdr.LedgerKeyContractData({
-      contract: StellarSdk.Address.fromString(CONTRACT_ID).toScAddress(),
-      key: StellarSdk.xdr.ScVal.scvVec([
-        StellarSdk.xdr.ScVal.scvSymbol(kind),
-        StellarSdk.Address.fromString(address).toScVal(),
+function dataKey(sdk: Sdk, kind: "Balance" | "Vaulted", address: string): StellarSdk.xdr.LedgerKey {
+  return sdk.xdr.LedgerKey.contractData(
+    new sdk.xdr.LedgerKeyContractData({
+      contract: sdk.Address.fromString(CONTRACT_ID).toScAddress(),
+      key: sdk.xdr.ScVal.scvVec([
+        sdk.xdr.ScVal.scvSymbol(kind),
+        sdk.Address.fromString(address).toScVal(),
       ]),
-      durability: StellarSdk.xdr.ContractDataDurability.persistent(),
+      durability: sdk.xdr.ContractDataDurability.persistent(),
     })
   );
 }
@@ -92,11 +93,13 @@ function dataKey(kind: "Balance" | "Vaulted", address: string): StellarSdk.xdr.L
  * the ledger. Addresses with no balance entry are absent from the result.
  */
 export async function readHolderStates(addresses: string[]): Promise<HolderStateSnapshot> {
+  const sdk = await loadSdk();
+  const server = (rpcServer ??= new sdk.rpc.Server(RPC_URL));
   const lookup = new Map<string, { kind: "Balance" | "Vaulted"; address: string }>();
   const keys: StellarSdk.xdr.LedgerKey[] = [];
   for (const address of addresses) {
     for (const kind of ["Balance", "Vaulted"] as const) {
-      const key = dataKey(kind, address);
+      const key = dataKey(sdk, kind, address);
       lookup.set(key.toXDR("base64"), { kind, address });
       keys.push(key);
     }
@@ -116,7 +119,7 @@ export async function readHolderStates(addresses: string[]): Promise<HolderState
     for (const entry of res.entries) {
       const meta = lookup.get(entry.key.toXDR("base64"));
       if (!meta) continue;
-      const native = StellarSdk.scValToNative(entry.val.contractData().val());
+      const native = sdk.scValToNative(entry.val.contractData().val());
       if (meta.kind === "Balance") {
         balances.set(meta.address, {
           value: BigInt(native as bigint | number | string),
