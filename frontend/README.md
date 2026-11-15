@@ -19,7 +19,9 @@ Monitor's price and liquidity snapshots.
 
 ```
 app/                      Next.js App Router — all routes static ( output: "export" )
-functions/worker.ts       Worker entrypoint — routes /api/auth/* and /api/gateway/*
+app/(app)/                The app pages ( /, /sign, /terminal, /ecosystem ): wallet + protocol providers
+public/_headers           Response headers for the static pages and files
+functions/worker.ts       Worker entrypoint — routes /api/* and /mcp
 functions/api/            Handlers (plain async (req, env) => Response)
 functions/_lib/           Shared helpers (email, derive, jwt, stellar, …)
 out/                      Build output ( created by `next build` )
@@ -29,6 +31,45 @@ wrangler.toml             Worker config ( assets + KV + send_email + vars )
 Two tsconfigs: the root one for the Next app, `functions/tsconfig.json`
 for the Workers runtime. ESLint ignores `functions/` (covered by the
 functions tsconfig instead).
+
+## Pages, load time and what crawlers read
+
+**Two kinds of page.** The app pages (`app/(app)/`: the home page, `/sign`,
+`/terminal`, `/ecosystem`) need an account, so their layout mounts the wallet
+and protocol providers, which restore a session, read the chain and poll it.
+Everything else (`/whitepaper`, `/integrate`, the sign-in landing page, the
+404) is a document: no providers, no background requests, only the
+JavaScript it takes to show it.
+
+**The Stellar SDK is loaded on demand.** It is about 1 MB. Client code never
+imports it for values at the top of a module: `app/lib/sdk.ts` exports
+`loadSdk()`, and the libraries (`stellar.ts`, `vault.ts`, `tokens.ts`,
+`holders.ts`) await it inside the functions that use it, so a page hydrates
+first and the SDK arrives as its own chunk. Types come from
+`import type * as StellarSdk`. The wallet kit is fetched when there is a
+wallet session to restore or the visitor asks to connect, and the Vault,
+Monitor and Admin panels when their tab is first opened
+(`app/components/HomeApp.tsx`).
+
+**What a search engine or an assistant reads.**
+
+| File | What it is |
+| --- | --- |
+| `app/lib/site.ts` | Names, URLs and contract ids shared by pages, metadata and structured data |
+| `app/lib/seo.ts` | `pageMetadata()`: a page's title, description, canonical URL, Open Graph and Twitter card. Every page uses it, because Next merges metadata shallowly |
+| `app/lib/schema.ts`, `app/components/JsonLd.tsx` | schema.org structured data |
+| `app/components/About.tsx`, `app/lib/faq.ts` | The written part of the home page and its questions; both restate `WHITEPAPER.md` |
+| `app/sitemap.ts`, `public/robots.txt`, `public/llms.txt` | The sitemap (indexed pages only), the crawler rules (everyone welcome, AI crawlers by name) and the summary for language models |
+| `public/og.png`, `scripts/og-image.mjs` | The link-preview image and the script that draws it |
+
+**Response headers.** `public/_headers` gives every static page a content
+security policy (no framing, no eval, scripts from this site only,
+connections to this site's API and the Stellar RPC only), HSTS and the usual
+hardening headers, and lets browsers keep the hashed files under
+`/_next/static/` for a year. The Worker sets its own headers on `/api/*` and
+`/mcp` (`functions/_lib/guard.ts`). A new endpoint the browser calls has to
+be added to `connect-src`; `tests/site-files.test.mjs` fails if the RPC URL
+in the code isn't there.
 
 ## Dev
 
@@ -238,6 +279,36 @@ Deploy the data worker first (the binding calls its methods by name), then
 `0006_terminal.sql`), then this Worker. `tests/terminal-*.test.mjs` run
 whole requests, payments and deliveries against SQLite with the real
 migrations.
+
+## Guards on every request
+
+Before a request reaches a handler, `functions/worker.ts` runs it through
+`functions/_lib/guard.ts`:
+
+- **Edge rate limits** (`[[ratelimits]]` in `wrangler.toml`), per caller
+  address and per Cloudflare location: 300 requests a minute to anything, and
+  60 a minute for requests that write, send or sign (every `POST`, and the
+  routes under `/api/auth`, `/api/gateway` and `/api/admin`). They are
+  approximate and cheap: floods are turned away before they reach D1, the
+  Stellar RPC or the mailer. The exact limits on what costs money are the
+  ones below.
+- **Request bodies** are read through a 256 KB cap, whether or not the
+  request declares its length.
+- **Every answer** carries `nosniff`, `X-Frame-Options: DENY`, a
+  `default-src 'none'` content security policy, HSTS, and `no-store` unless
+  the route set a cache policy of its own.
+- **Anything a handler didn't catch** becomes a plain JSON 500. The cause
+  goes to the Worker's log, never to the caller.
+- **Cached public routes** key on the query parameters they read, so a
+  made-up parameter can't get past the cache, and `/mcp` answers at most 10
+  messages per request.
+
+Sign-in tokens are minted and redeemed in one place
+(`functions/_lib/magic-token.ts`). `/api/auth/verify` passes KV only a value
+with a token's form (64 lowercase hex characters), because the namespace also
+holds other records.
+
+To report a security problem, see [`SECURITY.md`](../SECURITY.md).
 
 ## Gateway guards
 
