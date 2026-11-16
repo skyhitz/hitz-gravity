@@ -22,7 +22,10 @@ trades it back. The bot is that someone. Every five minutes it:
    describes.
 3. Asks the SDEX for a quote at that exact size, and simulates the vault swap,
    which also says what the network will charge. It goes ahead only if the
-   profit after those fees is at least 0.02 XLM and 0.3% of the trade.
+   profit after those fees is at least 0.02 XLM and 0.3% of the trade. The
+   swap's compute budget is the simulation's count plus 500,000 instructions
+   (about 19%): it runs a ledger or two after it was simulated, and once
+   needed 4% more.
 4. **Buys back on the SDEX first**: a path payment that must return what the
    vault leg will sell, plus the fees.
 5. **Then swaps in the vault**, with a minimum equal to what the SDEX leg
@@ -42,11 +45,20 @@ it. So the uncertain leg goes first, while failing is free:
 - If the buy-back doesn't go through, the bot has lost a 0.00001 XLM fee.
   Nothing reached the vault, so its fee (2% at least) was never paid on a
   quote that vanished. The next run tries again.
-- If the buy-back lands and the vault leg then fails (someone else traded
-  the vault in those seconds), the bot is left with a plain conversion at the
-  SDEX price, which costs about a tenth of a percent.
+- If the buy-back lands and the vault leg doesn't (it expires unseen, or
+  fails on chain), the bot simulates the vault leg again and sends it once
+  more, with the same minimum. If that fails too, or the vault now pays less
+  than the SDEX leg spent (someone else traded it in those seconds), the bot
+  is left with a plain conversion at the SDEX price, which costs about a tenth
+  of a percent. It never sends the vault leg again when it can't tell whether
+  the first one landed: two could sell the asset twice.
 
 The other order would put the 2% fee at risk on every trade for no gain.
+
+A request the RPC or Horizon turns away because it is busy (HTTP 429, 502,
+503 or 504), or a dropped connection, is asked again twice, a second or two
+apart. That includes sending a signed transaction: the network applies it
+once, however many copies arrive.
 
 It holds both XLM and USDC, since a round trip spends one on the SDEX before
 the vault pays it back. When one side falls under a fifth of the total value
@@ -117,7 +129,7 @@ transactions. Its `action` is one of:
 | `would-trade` | A dry run found a trade |
 | `trade` | Both legs done; `profitXlm` is what it made after fees |
 | `missed` | The SDEX leg didn't go through; nothing changed but its fee |
-| `trade-incomplete` | The SDEX leg ran and the vault leg didn't |
+| `trade-incomplete` | The SDEX leg ran and the vault leg didn't, even sent a second time |
 | `rebalance` | Converted back toward half XLM, half USDC |
 | `setup` | Added the USDC trustline |
 | `skip`, `error` | Couldn't run; `reason` or `error` says why |

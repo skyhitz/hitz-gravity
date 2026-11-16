@@ -138,6 +138,8 @@ export interface ArbReport {
   hedgeLeg?: Leg;
   /** The vault leg (second). */
   vaultLeg?: Leg;
+  /** The vault leg's first try, when it didn't land and the leg was sent again: vaultLeg is then the second try. */
+  vaultFirstTry?: Leg;
   setupLeg?: Leg;
   /** Realized profit in the sold asset, and in XLM after both legs' fees. */
   profit?: string;
@@ -201,6 +203,18 @@ const POLL_MS = 2000;
 const EXPIRY_GRACE_S = 10;
 const GIVE_UP_AFTER_S = 60;
 const SEND_ATTEMPTS = 4;
+/**
+ * Instructions asked for on top of what the vault leg's simulation counts. The RPC adds 4% by
+ * default; on Nov 12, 2026 a vault leg ran a ledger after its simulation, needed 4.01% more and
+ * failed after its SDEX leg had landed. 500,000 is about 19% of a swap's count, nearly five times
+ * the largest drift in the bot's first 69 swaps, and adds about 0.000015 XLM to the leg's fee.
+ */
+const INSTRUCTION_LEEWAY = 500_000;
+/** An RPC or Horizon answer worth asking again: the server was busy, not the request wrong. */
+const RETRY_STATUSES = new Set([429, 502, 503, 504]);
+/** Waits before the second and third tries, in milliseconds; a Retry-After of up to 5 seconds is honoured. */
+const RETRY_WAITS_MS = [1000, 2000];
+const RETRY_AFTER_MAX_MS = 5000;
 /** Rebalance when one side holds less than this share of the inventory's value. */
 const REBALANCE_BELOW = 0.2;
 /** ...and only at a price within this share of the going one. */
@@ -395,8 +409,27 @@ function netOf(cfg: ArbConfig): Net {
   };
 }
 
+/**
+ * A request to the RPC or Horizon, asked again when the server is busy (HTTP 429, 502, 503, 504) or
+ * the connection drops. Safe for every request the bot makes: reads and simulations change nothing,
+ * and a signed transaction sent twice is applied once (the network knows it by its hash).
+ */
+async function request(net: Net, url: string, init?: RequestInit): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    let res: Response | undefined;
+    try {
+      res = await net.io.fetch(url, init);
+    } catch (err) {
+      if (attempt >= RETRY_WAITS_MS.length) throw err;
+    }
+    if (res && (!RETRY_STATUSES.has(res.status) || attempt >= RETRY_WAITS_MS.length)) return res;
+    const retryAfter = Number(res?.headers.get("retry-after") ?? "") * 1000;
+    await net.io.sleep(Math.min(RETRY_AFTER_MAX_MS, Math.max(RETRY_WAITS_MS[attempt], Number.isFinite(retryAfter) ? retryAfter : 0)));
+  }
+}
+
 async function rpcCall<T>(net: Net, method: string, params: unknown): Promise<T> {
-  const res = await net.io.fetch(net.cfg.rpcUrl, {
+  const res = await request(net, net.cfg.rpcUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
@@ -407,8 +440,10 @@ async function rpcCall<T>(net: Net, method: string, params: unknown): Promise<T>
   return body.result as T;
 }
 
-async function simulate(net: Net, tx: StellarSdk.Transaction): Promise<StellarSdk.rpc.Api.SimulateTransactionResponse> {
-  const response = await rpcCall<StellarSdk.rpc.Api.RawSimulateTransactionResponse>(net, "simulateTransaction", { transaction: tx.toXDR() });
+/** Simulate a transaction; `instructionLeeway` asks for that many instructions on top of the count (the RPC's default is 4%). */
+async function simulate(net: Net, tx: StellarSdk.Transaction, instructionLeeway = 0): Promise<StellarSdk.rpc.Api.SimulateTransactionResponse> {
+  const params = instructionLeeway ? { transaction: tx.toXDR(), resourceConfig: { instructionLeeway } } : { transaction: tx.toXDR() };
+  const response = await rpcCall<StellarSdk.rpc.Api.RawSimulateTransactionResponse>(net, "simulateTransaction", params);
   return StellarSdk.rpc.parseRawSimulation(response);
 }
 
@@ -475,7 +510,7 @@ interface AccountView {
 
 async function readAccount(net: Net): Promise<AccountView> {
   const { cfg } = net;
-  const res = await net.io.fetch(`${cfg.horizonUrl}/accounts/${cfg.address}`, { headers: { Accept: "application/json" } });
+  const res = await request(net, `${cfg.horizonUrl}/accounts/${cfg.address}`, { headers: { Accept: "application/json" } });
   if (res.status === 404) throw new Error(`account ${cfg.address} doesn't exist`);
   if (!res.ok) throw new Error(`horizon ${res.status} reading the account`);
   const acct = (await res.json()) as {
@@ -511,7 +546,7 @@ async function sdexQuote(net: Net, sell: Side, amount: bigint): Promise<Route | 
   const buy = net.asset[other(sell)];
   const dest = buy.isNative() ? "native" : `${buy.getCode()}:${buy.getIssuer()}`;
   const url = `${net.cfg.horizonUrl}/paths/strict-send?${horizonAsset("source", net.asset[sell])}&source_amount=${fmt(amount)}&destination_assets=${encodeURIComponent(dest)}`;
-  const res = await net.io.fetch(url, { headers: { Accept: "application/json" } });
+  const res = await request(net, url, { headers: { Accept: "application/json" } });
   if (!res.ok) throw new Error(`horizon ${res.status} quoting the SDEX`);
   const records = ((await res.json()) as { _embedded: { records: { destination_amount: string; path: { asset_type: string; asset_code?: string; asset_issuer?: string }[] }[] } })._embedded.records;
   let best: Route | null = null;
@@ -652,7 +687,7 @@ async function vaultSwapTx(
       )
     )
     .build();
-  const sim = await simulate(net, tx);
+  const sim = await simulate(net, tx, INSTRUCTION_LEEWAY);
   if (StellarSdk.rpc.Api.isSimulationError(sim)) {
     const first = sim.error.split("\n")[0];
     // Error::Slippage: someone traded between reading the pools and simulating.
@@ -792,23 +827,43 @@ export async function runOnce(cfg: ArbConfig): Promise<ArbReport> {
     report.hedgeLeg.received = fmt(boughtBack);
 
     // Leg 2: the vault, which must pay back at least what leg 1 spent.
-    const leg2 = await submit(net, prepared.tx);
+    let leg2 = await submit(net, prepared.tx);
     report.vaultLeg = legOf(leg2);
+    let simulatedOut = prepared.simulatedOut;
+    let firstTryFee = 0n;
+    // A vault leg that can't have landed (it expired, was refused as too late, or failed on chain) is
+    // simulated again and sent once more, with the same minimum: the SDEX leg's asset is already in
+    // the account. Never after an unknown outcome: the first may still land, and a second try would
+    // sell the asset twice. Nor when the vault now pays under the minimum: the simulation says so.
+    if (leg2.status === "EXPIRED" || leg2.status === "FAILED" || (leg2.status === "REJECTED" && leg2.code === "txTooLate")) {
+      // A failed try used its sequence number; one that never landed didn't.
+      const again = await vaultSwapTx(net, accountAt(net, account, leg2.status === "FAILED" ? 2n : 1n), plan.sell, plan.amountIn, plan.hedgeIn);
+      if (again) {
+        again.tx.sign(cfg.keypair!);
+        report.vaultFirstTry = report.vaultLeg;
+        firstTryFee = leg2.feeXlm ? raw(leg2.feeXlm) : 0n;
+        leg2 = await submit(net, again.tx);
+        report.vaultLeg = legOf(leg2);
+        simulatedOut = again.simulatedOut;
+      }
+    }
+    const firstTry = report.vaultFirstTry ? `the vault leg's first try ${outcome(report.vaultFirstTry)}` : "";
     if (leg2.status !== "SUCCESS") {
       report.action = "trade-incomplete";
-      report.reason = `the vault leg ${outcome(leg2)}; the buy-back stands as a plain SDEX conversion and the inventory rebalances later`;
+      report.reason = `${firstTry ? `${firstTry}, its second ${outcome(leg2)}` : `the vault leg ${outcome(leg2)}`}; the buy-back stands as a plain SDEX conversion and the inventory rebalances later`;
       return report;
     }
+    if (firstTry) report.reason = `${firstTry}; it went through on the second`;
     // The swap returns what it paid. If that can't be read, the simulation's figure stands: the leg
     // succeeded, so it paid at least hedgeIn either way.
-    let paid = prepared.simulatedOut;
+    let paid = simulatedOut;
     try {
       if (leg2.returnValue) paid = BigInt(StellarSdk.scValToNative(leg2.returnValue) as bigint);
     } catch {
-      paid = prepared.simulatedOut;
+      paid = simulatedOut;
     }
     report.vaultLeg.received = fmt(paid);
-    const fees = leg1.feeXlm && leg2.feeXlm ? toNum(raw(leg1.feeXlm) + raw(leg2.feeXlm)) : feeXlm;
+    const fees = (leg1.feeXlm && leg2.feeXlm ? toNum(raw(leg1.feeXlm) + raw(leg2.feeXlm)) : feeXlm) + toNum(firstTryFee);
     report.action = "trade";
     report.profit = fmt(boughtBack - plan.amountIn);
     report.profitXlm = Number((toNum(boughtBack - plan.amountIn) * xlmPerSold + toNum(paid - plan.hedgeIn) * xlmPerBought - fees).toFixed(7));

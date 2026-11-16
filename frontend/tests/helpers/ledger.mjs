@@ -32,6 +32,8 @@ export const MAINNET_POOLS = [
 const UNIT = 10_000_000n;
 const BASE_RESERVE = 5_000_000n;
 const CLASSIC_FEE = 100n;
+/** What a vault swap's simulation counts on mainnet, before the RPC's margin (Nov 16, 2026). */
+const RAW_INSTRUCTIONS = 2_576_718n;
 const LEDGER_SECONDS = 5;
 
 export const units = (decimal) => {
@@ -93,6 +95,8 @@ export function makeLedger({ bid, ask, pools = MAINNET_POOLS, time = 1_794_420_0
     drop: null, // (entry) => boolean: accepted, then never included
     rpcDown: null, // (method) => boolean: answer that RPC call with HTTP 503
     horizonDown: null, // (path) => boolean
+    rateLimit: null, // (call) => boolean: answer with HTTP 429; call as in `calls`, e.g. "rpc sendTransaction"
+    extraInstructions: null, // (entry) => number: instructions a vault swap needs beyond what its simulation counted
     tryAgainLater: 0, // answer this many sendTransaction calls with TRY_AGAIN_LATER
     behind: 0, // answer this many sends of a vault transaction with txBadSeq, as an RPC node a ledger behind would
     omitMeta: false, // getTransaction without resultMetaXdr
@@ -211,6 +215,11 @@ export function makeLedger({ bid, ask, pools = MAINNET_POOLS, time = 1_794_420_0
       entry.error = result.error;
       return failed(fee, tr(xdr.InvokeHostFunctionResult.invokeHostFunctionTrapped()));
     }
+    const declared = BigInt(tx.toEnvelope().v1().tx().ext().sorobanData().resources().instructions());
+    if (RAW_INSTRUCTIONS + BigInt(ledger.extraInstructions?.(entry) ?? 0) > declared) {
+      entry.error = "operation instructions exceeds amount specified";
+      return failed(fee, tr(xdr.InvokeHostFunctionResult.invokeHostFunctionResourceLimitExceeded()));
+    }
     ledger.pools = result.pools;
     credit(source, call.tokenIn, -call.amountIn);
     credit(accounts.get(call.to), call.tokenOut, result.amountOut);
@@ -258,8 +267,11 @@ export function makeLedger({ bid, ask, pools = MAINNET_POOLS, time = 1_794_420_0
 
   // ─── Soroban RPC ───────────────────────────────────────────────────────────
 
+  const limited = () => new Response("rate limited", { status: 429, headers: { "Retry-After": "1" } });
+
   function rpc(method, params) {
     ledger.calls.push(`rpc ${method}`);
+    if (ledger.rateLimit?.(`rpc ${method}`)) return limited();
     if (ledger.rpcDown?.(method)) return new Response("unavailable", { status: 503 });
     tick();
     const ok = (result) => json({ jsonrpc: "2.0", id: 1, result });
@@ -267,12 +279,15 @@ export function makeLedger({ bid, ask, pools = MAINNET_POOLS, time = 1_794_420_0
     if (method === "simulateTransaction") {
       const tx = StellarSdk.TransactionBuilder.fromXDR(params.transaction, PASSPHRASE);
       const call = swapCall(tx);
+      const leeway = BigInt(params.resourceConfig?.instructionLeeway ?? 0);
+      const margin = (RAW_INSTRUCTIONS * 4n) / 100n;
+      const instructions = RAW_INSTRUCTIONS + (leeway > margin ? leeway : margin);
       const success = (retval) =>
         ok({
           latestLedger: ledgerSeq,
           minResourceFee: RESOURCE_FEE.toString(),
           results: [{ auth: [], xdr: retval.toXDR("base64") }],
-          transactionData: new StellarSdk.SorobanDataBuilder().setResourceFee(RESOURCE_FEE.toString()).build().toXDR("base64"),
+          transactionData: new StellarSdk.SorobanDataBuilder().setResources(Number(instructions), 260, 1400).setResourceFee(RESOURCE_FEE.toString()).build().toXDR("base64"),
           events: [],
         });
       if (call?.name === "pools") {
@@ -341,7 +356,9 @@ export function makeLedger({ bid, ask, pools = MAINNET_POOLS, time = 1_794_420_0
 
   function horizon(url) {
     const path = url.pathname;
-    ledger.calls.push(`horizon ${path.startsWith("/accounts/") ? "/accounts" : path}`);
+    const call = `horizon ${path.startsWith("/accounts/") ? "/accounts" : path}`;
+    ledger.calls.push(call);
+    if (ledger.rateLimit?.(call)) return limited();
     if (ledger.horizonDown?.(path)) return new Response("unavailable", { status: 503 });
     tick();
     if (path.startsWith("/accounts/")) {

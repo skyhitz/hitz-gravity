@@ -342,6 +342,126 @@ test("a vault leg whose return value can't be read is still a finished trade", a
   assert.ok(Math.abs(report.profitXlm - gained) < 1e-4, `reported ${report.profitXlm}, gained ${gained}`);
 });
 
+// ─── A busy network, and a vault leg that doesn't land ───────────────────────
+
+/** What the account gained, in XLM at the SDEX's ask. */
+const gainOf = (before, after) => xlm(after.xlm - before.xlm) + xlm(after.usdc - before.usdc) / SDEX.ask;
+
+test("a vault leg that needs 4% more instructions than its simulation counted still lands", async () => {
+  // Nov 12, 2026 on mainnet: a vault leg used 2,549,045 instructions against the 2,548,826 its
+  // simulation declared (its count plus the RPC's 4% margin), and failed after the SDEX leg landed.
+  for (const extra of [103_400, 310_000]) {
+    // 4.01% more, as on Nov 12; then three times that.
+    const { ledger, address, run } = world();
+    ledger.extraInstructions = () => extra;
+    const before = ledger.account(address);
+    const report = await run();
+    assert.equal(report.action, "trade", `${extra} more: ${report.error ?? report.reason}`);
+    assert.deepEqual(ledger.submitted.map((e) => e.status), ["SUCCESS", "SUCCESS"], `${extra} more`);
+    assert.ok(gainOf(before, ledger.account(address)) > 0.3);
+  }
+});
+
+test("rate-limited RPC and Horizon calls are asked again, and the round trip finishes", async () => {
+  const { ledger, run } = world();
+  // The first call of every kind is refused with HTTP 429.
+  const refused = new Set();
+  ledger.rateLimit = (call) => !refused.has(call) && Boolean(refused.add(call));
+  const report = await run();
+  assert.equal(report.action, "trade", report.error ?? report.reason);
+  assert.deepEqual(ledger.submitted.map((e) => e.status), ["SUCCESS", "SUCCESS"]);
+  for (const call of ["rpc simulateTransaction", "rpc sendTransaction", "rpc getTransaction", "horizon /accounts", "horizon /paths/strict-send"]) {
+    assert.ok(refused.has(call), `${call} was never refused`);
+  }
+});
+
+test("a send refused twice for the rate is sent a third time, and each transaction lands once", async () => {
+  // Nov 13 and 14, 2026: two SDEX legs were never sent because the RPC answered HTTP 429.
+  const { ledger, run } = world();
+  let refusals = 0;
+  ledger.rateLimit = (call) => call === "rpc sendTransaction" && refusals++ < 2;
+  const report = await run();
+  assert.equal(report.action, "trade", report.error ?? report.reason);
+  assert.deepEqual(ledger.submitted.map((e) => [e.tx.sequence, e.status]), [["1001", "SUCCESS"], ["1002", "SUCCESS"]]);
+});
+
+test("an RPC that stays rate-limited ends the run as an error after a few tries, with nothing sent", async () => {
+  const { ledger, run } = world();
+  ledger.rateLimit = (call) => call.startsWith("rpc ");
+  const report = await run();
+  assert.equal(report.action, "error");
+  assert.match(report.error, /429/);
+  assert.deepEqual(ledger.submitted, []);
+  const tries = ledger.calls.filter((c) => c === "rpc simulateTransaction").length;
+  assert.ok(tries >= 2 && tries <= 4, `${tries} tries`);
+});
+
+test("a vault leg that is accepted but never lands is sent again, and the round trip finishes", async () => {
+  // Nov 14, 2026 on mainnet: the vault leg was accepted and never included.
+  const { ledger, address, run } = world();
+  let swaps = 0;
+  ledger.drop = (entry) => entry.type === "swap" && swaps++ === 0;
+  const before = ledger.account(address);
+  const report = await run();
+  assert.equal(report.action, "trade", report.error ?? report.reason);
+  // The same sequence number: the first try never used it.
+  assert.deepEqual(ledger.submitted.map((e) => [e.type, e.tx.sequence, e.status]), [
+    ["pathPaymentStrictSend", "1001", "SUCCESS"],
+    ["swap", "1002", "DROPPED"],
+    ["swap", "1002", "SUCCESS"],
+  ]);
+  assert.equal(report.vaultFirstTry.status, "EXPIRED");
+  assert.equal(report.vaultFirstTry.hash, ledger.submitted[1].hash);
+  assert.equal(report.vaultLeg.status, "SUCCESS");
+  assert.equal(report.vaultLeg.hash, ledger.submitted[2].hash);
+  const after = ledger.account(address);
+  assert.ok(after.usdc >= before.usdc, "USDC is whole");
+  assert.ok(Math.abs(report.profitXlm - gainOf(before, after)) < 1e-6, `reported ${report.profitXlm}, gained ${gainOf(before, after)}`);
+});
+
+test("a vault leg that fails on chain is sent again with the next sequence number, its fee counted", async () => {
+  const { ledger, address, run } = world();
+  let swaps = 0;
+  // The first try runs out of instructions by far more than any margin.
+  ledger.extraInstructions = () => (swaps++ === 0 ? 5_000_000 : 0);
+  const before = ledger.account(address);
+  const report = await run();
+  assert.equal(report.action, "trade", report.error ?? report.reason);
+  assert.deepEqual(ledger.submitted.map((e) => [e.type, e.tx.sequence, e.status]), [
+    ["pathPaymentStrictSend", "1001", "SUCCESS"],
+    ["swap", "1002", "FAILED"],
+    ["swap", "1003", "SUCCESS"],
+  ]);
+  assert.equal(report.vaultFirstTry.status, "FAILED");
+  assert.match(report.vaultFirstTry.code, /ResourceLimitExceeded/);
+  const after = ledger.account(address);
+  // The failed try was charged 0.0021652 XLM, and the reported profit counts it.
+  assert.ok(Math.abs(report.profitXlm - gainOf(before, after)) < 1e-6, `reported ${report.profitXlm}, gained ${gainOf(before, after)}`);
+});
+
+test("a vault leg is sent again at most once", async () => {
+  const { ledger, run } = world();
+  ledger.drop = (entry) => entry.type === "swap";
+  const report = await run();
+  assert.equal(report.action, "trade-incomplete");
+  assert.deepEqual(ledger.submitted.map((e) => e.type), ["pathPaymentStrictSend", "swap", "swap"]);
+  assert.equal(report.vaultFirstTry.status, "EXPIRED");
+  assert.equal(report.vaultLeg.status, "EXPIRED");
+});
+
+test("a vault leg whose outcome is unknown is never sent again", async () => {
+  // It may have landed unseen, and a second one would sell the asset twice. This one didn't land, so
+  // a second try would go through: only the rule stops it, as the bot can't tell.
+  const { ledger, run } = world();
+  ledger.drop = (entry) => entry.type === "swap";
+  ledger.rpcDown = (method) => method === "getTransaction" && ledger.submitted.length >= 2;
+  const report = await run();
+  assert.equal(report.action, "trade-incomplete");
+  assert.equal(report.vaultLeg.status, "UNKNOWN");
+  assert.equal(report.vaultFirstTry, undefined);
+  assert.deepEqual(ledger.submitted.map((e) => e.type), ["pathPaymentStrictSend", "swap"]);
+});
+
 // ─── When not to trade ───────────────────────────────────────────────────────
 
 test("with the vault in line with the SDEX, nothing is sent", async () => {
