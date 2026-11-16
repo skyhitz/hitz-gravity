@@ -189,3 +189,24 @@ test("every question has an answer, its own anchor, and no em-dash", () => {
     assert.ok(!/[–—]/.test(faq.question + faq.answer), `${faq.id}: house style is no dashes`);
   }
 });
+
+// ─── Listings ────────────────────────────────────────────────────────────────
+
+test("server.json describes the MCP server the Worker runs", () => {
+  const server = JSON.parse(readFileSync(join(root, "..", "server.json"), "utf8"));
+  const mcp = read("functions/api/mcp.ts");
+  const version = /version: "([^"]+)"/.exec(mcp)?.[1];
+  assert.equal(server.version, version, "bump server.json and SERVER_INFO.version in functions/api/mcp.ts together");
+  assert.match(server.name, /^io\.github\.skyhitz\/[a-z0-9._-]+$/, "publish-mcp.yml signs in with GitHub OIDC, which grants io.github.skyhitz/*");
+  assert.ok(server.description.length <= 100, `description is ${server.description.length} characters; the registry allows 100`);
+  assert.deepEqual(server.remotes, [{ type: "streamable-http", url: "https://skyhitz.io/mcp" }]);
+});
+
+test("the listing files name the contracts the app trades with", () => {
+  const adapter = readFileSync(join(root, "..", "listings", "defillama", "index.js"), "utf8");
+  assert.ok(adapter.includes(`'${VAULT_CONTRACT}'`) && adapter.includes(`'${HITZ_CONTRACT}'`));
+  const token = JSON.parse(readFileSync(join(root, "..", "listings", "soroswap", `${HITZ_CONTRACT}.json`), "utf8"));
+  assert.equal(token.contract, HITZ_CONTRACT);
+  assert.equal(token.domain, "skyhitz.io");
+  assert.ok(read("public/.well-known/stellar.toml").includes(`contract = "${HITZ_CONTRACT}"`), "stellar.toml must list the token the Soroswap entry names");
+});

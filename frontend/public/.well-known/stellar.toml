@@ -4,10 +4,17 @@
 # 
 # Reference: https://developers.stellar.org/docs/tokens/publishing-asset-info
 
-# Account Information
-# Replace with your actual ISSUER_ID from environment
+# Accounts this domain controls (SEP-1). Explorers and directories use this
+# list to confirm that an account belongs to skyhitz.io.
 ACCOUNTS = [
-    "GCAETBNBFKVGLYFXKCLMKT6ZVHFXHRSDFSEW7ODIUJYC6R7H2QJ6OKGU"
+    # Admin of the HITZ token and the Sovereign Vault, and the treasury
+    # (a registered pool). Also the issuer of the legacy classic HITZ asset.
+    "GCAETBNBFKVGLYFXKCLMKT6ZVHFXHRSDFSEW7ODIUJYC6R7H2QJ6OKGU",
+    # The arbitrage bot that keeps the vault's prices in line with the
+    # Stellar DEX (status: https://skyhitz.io/api/v1/bot).
+    "GDZACFEQZNHDEH4K3RQQWQNXZ5RIT4SNNJZJG6BROYNWMU567HT6BASD",
+    # Gas sponsor of the email gateway (a registered router).
+    "GBER7ROBYH5NFFKXCDGTSMUKTDQ4U3MEUTUCPJRZZY6EYZVEFDBVNJNB"
 ]
 
 # Organization Information
