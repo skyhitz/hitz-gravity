@@ -1,0 +1,74 @@
+# Publishes the MCP server (https://skyhitz.io/mcp) to the official MCP Registry,
+# https://registry.modelcontextprotocol.io, from server.json at the repo root.
+# Directories and MCP clients that read the registry list it from there.
+#
+# Runs when a push to main changes server.json, and on demand from the Actions
+# tab ("Publish MCP server", Run workflow). A version the registry already has
+# is skipped, so bump `version` in server.json (and SERVER_INFO.version in
+# frontend/functions/api/mcp.ts) to publish a change.
+#
+# Signs in with GitHub Actions OIDC: the registry grants a workflow in a
+# skyhitz repository the io.github.skyhitz/* namespace. No secret to store.
+#
+# mcp-publisher is pinned by version and by the SHA-256 of its release archive,
+# which was checked against the release's Sigstore bundle (cosign verify-blob,
+# identity: the registry's release.yml at that tag). To upgrade, verify the new
+# archive the same way and update both values.
+
+name: Publish MCP server
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "server.json"
+      - ".github/workflows/publish-mcp.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish-mcp
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      MCP_PUBLISHER_VERSION: v1.8.1
+      MCP_PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL -o mcp-publisher.tar.gz \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum --check
+          tar xzf mcp-publisher.tar.gz mcp-publisher
+          rm mcp-publisher.tar.gz
+
+      - name: Validate server.json
+        run: ./mcp-publisher validate
+
+      - name: Already published?
+        id: published
+        run: |
+          name=$(jq -r .name server.json)
+          version=$(jq -r .version server.json)
+          found=$(curl -fsS -G "https://registry.modelcontextprotocol.io/v0.1/servers" --data-urlencode "search=${name}" \
+            | jq --arg n "$name" --arg v "$version" '[.servers[]? | select(.server.name == $n and .server.version == $v)] | length')
+          echo "count=${found}" >> "$GITHUB_OUTPUT"
+          if [ "${found}" != "0" ]; then
+            echo "::notice::${name} ${version} is already in the registry. Bump the version in server.json to publish a change."
+          fi
+
+      - name: Publish
+        if: steps.published.outputs.count == '0'
+        run: |
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish

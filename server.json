@@ -1,0 +1,26 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.skyhitz/hitz-vault",
+  "title": "HITZ Sovereign Vault",
+  "description": "Quote and build HITZ, XLM and USDC swaps on Stellar's Sovereign Vault. Never holds a key.",
+  "version": "1.0.0",
+  "websiteUrl": "https://skyhitz.io/integrate/",
+  "repository": {
+    "url": "https://github.com/skyhitz/hitz-gravity",
+    "source": "github",
+    "subfolder": "frontend/functions/api"
+  },
+  "icons": [
+    {
+      "src": "https://skyhitz.io/icon.png",
+      "mimeType": "image/png",
+      "sizes": ["180x180"]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://skyhitz.io/mcp"
+    }
+  ]
+}
