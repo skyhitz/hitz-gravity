@@ -9,7 +9,7 @@ that repository, with the file from this folder copied in as it is.
 | --- | --- | --- |
 | [Official MCP Registry](#official-mcp-registry) | MCP clients and the directories that read the registry | Automatic: [`publish-mcp.yml`](../.github/workflows/publish-mcp.yml) |
 | [DefiLlama](#defillama) | TVL, the Stellar chain page, the Dexs category | Pull request to DefiLlama |
-| [Soroswap token list](#soroswap-token-list) | Soroban apps and wallets that read the list | Pull request to Soroswap |
+| [Soroswap token list](#soroswap-token-list) | Soroban apps, and wallets such as Varial that mark listed tokens "Verified" | Two pull requests to Soroswap: remove the legacy HITZ, list the new one |
 | [Stellar Expert directory](#stellar-expert-directory) | A name and tag on our contracts and accounts | Email to Stellar Expert |
 
 House style: no em-dashes. Use commas or periods.
@@ -70,20 +70,48 @@ values HITZ at the vault's own price).
 
 ## Soroswap token list
 
-[`soroswap/CBAPZAZN…OY4EU.json`](./soroswap/CBAPZAZNNB4X3VPXV2LYA5RMV7XHXIVREES2GG7R5GUXDZ4R4CKOY4EU.json)
-is the entry for the HITZ token. The name, symbol and decimals are the
-contract's own (`name()`, `symbol()`, `decimals()`), and the domain is the one
-whose [stellar.toml](https://skyhitz.io/.well-known/stellar.toml) lists the
-contract. HITZ is a custom Soroban token, so the entry has no `issuer`.
+Wallets read this list, not only Soroswap: Varial (SDF's wallet, formerly
+Freighter) loads it by default and marks the tokens on it "Verified". Two
+changes, in two separate pull requests from the fork `skyhitz/token-list`, so
+the removal doesn't wait on the listing's review:
 
-**Submit**
+1. **Remove the legacy HITZ.** Branch `remove-legacy-hitz` deletes
+   `assets/CBS5ZVKSSUKF4JY77CKUZPN72EDUM3OOGPYZKFC3KQVONXPJTF6UODD7.json` and
+   nothing else. That contract is the Stellar Asset Contract of the classic
+   `HITZ:GCAETBNB…OKGU`, listed in December 2025. Entries are keyed by
+   contract, so a token can't be updated in place: Soroswap's CI drops a
+   deleted file from `tokenList.json` after merge. Delisting changes no
+   balance and no pool, only the "Verified" mark.
+2. **List the new HITZ.** Branch `add-hitz-soroban` adds
+   [`soroswap/CBAPZAZN…OY4EU.json`](./soroswap/CBAPZAZNNB4X3VPXV2LYA5RMV7XHXIVREES2GG7R5GUXDZ4R4CKOY4EU.json).
+   The name, symbol and decimals are the contract's own (`name()`, `symbol()`,
+   `decimals()`). HITZ is a custom Soroban token, so the entry has no
+   `issuer`, and `comment` (SEP-42's field for alerts a wallet can show)
+   states the Event Horizon rule.
 
-1. Fork https://github.com/soroswap/token-list.
-2. Copy the file into `assets/`, keeping its name (the contract address).
-3. `yarn`, then `yarn verify`. It fetches the icon and checks the fields.
-4. Open a pull request that adds only that file: one that changes anything
-   else is closed automatically. Then let the Soroswap team know on Discord,
-   as their README asks.
+Both branches start from Soroswap's `main` and pass their gate (`yarn test`,
+`yarn verify`). The new entry also validates against the SEP-42 asset-list
+schema: wallets that check it reject a list with a bad entry.
+
+On-chain state of the legacy asset, from Horizon on November 17, 2026: about
+19.47M HITZ in trustlines, 99.7% of it in two frozen accounts, and every
+holder above 1,000 HITZ frozen. Its issuer is unlocked (it is also the new
+token's admin), with clawback enabled. `stellar.toml` marks the legacy entry
+`status = "dead"` and gives it no `image`.
+
+**What reviewers will ask.** Soroswap's review checklist says a token that
+isn't a Stellar Asset Contract "requires a security audit on the Soroban
+token code". Both contracts have had an internal review only (`AUDIT.md`);
+the PR says so, and links the source and the review.
+
+**What the listing doesn't do.** It gives the "Verified" mark, not trading:
+Soroswap has no HITZ pairs and its aggregator can't reach the vault. A
+Soroswap HITZ pair would be treated by the token like any other holder: once
+it held more than L, buys from it and withdrawals from it would fail until it
+was registered as a pool.
+
+After opening the pull requests, post in Soroswap's Discord, as their README
+asks.
 
 ## Stellar Expert directory
 

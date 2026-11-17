@@ -32,14 +32,17 @@ name = "Skyhitz Team"
 email = "support@skyhitz.io"
 
 # Asset: HITZ Token (Classic Stellar asset, legacy)
+# Marked dead (SEP-1 `status`): replaced by the Soroban HITZ token below, and
+# its large balances are frozen. No `image`, so explorers and wallets don't
+# show the current HITZ logo on it.
 [[CURRENCIES]]
 code = "HITZ"
 issuer = "GCAETBNBFKVGLYFXKCLMKT6ZVHFXHRSDFSEW7ODIUJYC6R7H2QJ6OKGU"
+status = "dead"
 display_decimals = 7
 name = "Skyhitz Token"
 desc = "Legacy token of the archived Skyhitz v1 music platform. Replaced by the Soroban HITZ token below; legacy holders are offered the new HITZ and XLM through the reparation campaign."
-conditions = "Legacy asset. The Skyhitz v1 platform it served is archived."
-image = "https://skyhitz.io/icon.png"
+conditions = "Legacy asset, no longer supported. The Skyhitz v1 platform it served is archived."
 is_asset_anchored = false
 is_unlimited = false
 max_number = 21000000
@@ -52,6 +55,7 @@ max_number = 21000000
 [[CURRENCIES]]
 code = "HITZ"
 contract = "CBAPZAZNNB4X3VPXV2LYA5RMV7XHXIVREES2GG7R5GUXDZ4R4CKOY4EU"
+status = "live"
 display_decimals = 7
 name = "Gravity HITZ"
 desc = "The token of HITZ Protocol, a Soroban SEP-41 contract. Any account holding more than the Event Horizon L = sqrt(S x 10^7), where S is the HITZ held by the protocol's registered pools, is vaulted and can only send HITZ to a registered pool. Trades on the HITZ Sovereign Vault (CDEISYZM526FZJ4PDWNVKD7UHXFO4ATT46K47YTUQAOLWZQV64ANNBWU), protocol-owned pools against XLM and USDC with no oracle."
