@@ -210,3 +210,14 @@ test("the listing files name the contracts the app trades with", () => {
   assert.equal(token.domain, "skyhitz.io");
   assert.ok(read("public/.well-known/stellar.toml").includes(`contract = "${HITZ_CONTRACT}"`), "stellar.toml must list the token the Soroswap entry names");
 });
+
+test("stellar.toml marks the legacy classic HITZ dead and the Soroban token live", () => {
+  const toml = read("public/.well-known/stellar.toml");
+  const entries = toml.split("[[CURRENCIES]]").slice(1);
+  const legacy = entries.find((e) => /issuer = "GCAETBNB/.test(e) && /code = "HITZ"/.test(e));
+  const current = entries.find((e) => e.includes(`contract = "${HITZ_CONTRACT}"`));
+  assert.ok(legacy && current, "both HITZ entries must stay in stellar.toml");
+  assert.match(legacy, /^status = "dead"$/m);
+  assert.doesNotMatch(legacy, /^image = /m, "the legacy asset must not carry the current HITZ logo");
+  assert.match(current, /^status = "live"$/m);
+});

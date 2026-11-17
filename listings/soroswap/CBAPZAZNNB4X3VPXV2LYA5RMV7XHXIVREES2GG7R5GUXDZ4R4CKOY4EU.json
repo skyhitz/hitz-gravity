@@ -6,5 +6,5 @@
   "domain": "skyhitz.io",
   "icon": "https://skyhitz.io/icon.png",
   "decimals": 7,
-  "comment": "Token of HITZ Protocol, a SEP-41 Soroban contract. Trades in its own exchange, the Sovereign Vault, against XLM and USDC."
+  "comment": "HITZ Protocol token (SEP-41). An account holding more than its Event Horizon, L = √S, can send HITZ only to a registered pool. See skyhitz.io"
 }
