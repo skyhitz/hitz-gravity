@@ -60,6 +60,7 @@ Monitor and Admin panels when their tab is first opened
 | `app/lib/schema.ts`, `app/components/JsonLd.tsx` | schema.org structured data |
 | `app/components/About.tsx`, `app/lib/faq.ts` | The written part of the home page and its questions; both restate `WHITEPAPER.md` |
 | `app/sitemap.ts`, `public/robots.txt`, `public/llms.txt` | The sitemap (indexed pages only), the crawler rules (everyone welcome, AI crawlers by name) and the summary for language models |
+| `public/auth.md` | How an agent gets a credential, a HITZ Terminal API key: with its own Stellar account, or from the user. Agent-readiness scanners read it too (the [auth.md](https://github.com/workos/auth.md) convention). `tests/auth-md.test.mjs` sends every request it shows to the terminal's router |
 | `public/og.png`, `scripts/og-image.mjs` | The link-preview image and the script that draws it |
 
 **Response headers.** `public/_headers` gives every static page a content

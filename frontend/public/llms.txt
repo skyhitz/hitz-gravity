@@ -21,6 +21,7 @@ Key facts:
 - [Web app](https://skyhitz.io): trade with a Stellar wallet or an email account
 - [Arbitrage bot](https://docs.skyhitz.io/vault/arbitrage-bot.md): the bot Skyhitz runs between the vault and the Stellar DEX (its trades: https://skyhitz.io/api/v1/bot), and how to run your own
 - [HITZ Terminal](https://skyhitz.io/terminal/): XLM market, leverage and on-chain flow data with an API (https://skyhitz.io/api/terminal); paid plans are paid in USDC or XLM through one vault swap that buys HITZ for the treasury
+- [auth.md](https://skyhitz.io/auth.md): how an agent gets a HITZ Terminal API key, with its own Stellar account or from the user; the HTTP API and the MCP server need no credential
 
 ## Docs
 

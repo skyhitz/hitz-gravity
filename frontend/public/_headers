@@ -69,6 +69,11 @@
 # fetches them, and readable from any origin, so a tool running in a browser
 # can fetch them too. (stellar.toml already gets its CORS header from a rule
 # in the Cloudflare dashboard; naming it here as well would send it twice.)
+# auth.md, how an agent gets a credential, is markdown, and agents ask for it
+# as text/markdown.
+/auth.md
+  Content-Type: text/markdown; charset=utf-8
+  Access-Control-Allow-Origin: *
 /llms.txt
   Content-Type: text/plain; charset=utf-8
   Access-Control-Allow-Origin: *
