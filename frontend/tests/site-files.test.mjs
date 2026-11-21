@@ -1,20 +1,23 @@
 // The static files a browser, a crawler or an agent reads before anything
-// else: the response headers (public/_headers), robots.txt, security.txt and
-// llms.txt. These are plain text that nothing compiles, so a typo or a value
-// left behind when the code moves is caught here.
+// else: the response headers (public/_headers), robots.txt, security.txt,
+// llms.txt and the API catalog. These are plain text that nothing compiles,
+// so a typo or a value left behind when the code moves is caught here.
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { FAQS } from "../app/lib/faq.ts";
-import { HITZ_CONTRACT, HOME_DESCRIPTION, HOME_TITLE, INDEXED_PAGES, VAULT_CONTRACT, pageUrl } from "../app/lib/site.ts";
+import { HITZ_CONTRACT, HOME_DESCRIPTION, HOME_TITLE, INDEXED_PAGES, SITE_URL, VAULT_CONTRACT, pageUrl } from "../app/lib/site.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (path) => readFileSync(join(root, path), "utf8");
 
-/** public/_headers as { pattern: { header: value } }, comments dropped. */
+/**
+ * public/_headers as { pattern: { header: value } }, comments dropped. A header
+ * named twice in a rule is joined with ", ", as Cloudflare joins it.
+ */
 function headerRules() {
   const rules = {};
   let current = null;
@@ -25,7 +28,9 @@ function headerRules() {
     } else {
       const at = line.indexOf(":");
       assert.ok(current && at > 0, `header line outside a rule: ${line}`);
-      current[line.slice(0, at).trim()] = line.slice(at + 1).trim();
+      const name = line.slice(0, at).trim();
+      const value = line.slice(at + 1).trim();
+      current[name] = current[name] ? `${current[name]}, ${value}` : value;
     }
   }
   return rules;
@@ -176,6 +181,108 @@ test("llms.txt names both contracts and the ways to trade", () => {
   for (const url of ["https://skyhitz.io/mcp", "https://skyhitz.io/api/v1", "https://skyhitz.io/api/v1/openapi.json", "https://docs.skyhitz.io/llms-full.txt"]) {
     assert.ok(text.includes(url), `${url} isn't linked`);
   }
+});
+
+// ─── Discovery: the home page's Link headers and the API catalog ─────────────
+
+/** A Link header (RFC 8288) as [{ rel, target }], one entry per relation type. */
+function links(header) {
+  if (!header) return [];
+  return header.split(/,\s*(?=<)/).flatMap((value) => {
+    const match = /^<([^>]*)>(.*)$/.exec(value.trim());
+    assert.ok(match, `not a Link value: ${value}`);
+    const params = {};
+    for (const param of match[2].split(";").slice(1)) {
+      const at = param.indexOf("=");
+      assert.ok(at > 0, `Link parameter without a value: ${param}`);
+      params[param.slice(0, at).trim().toLowerCase()] = param.slice(at + 1).trim().replace(/^"(.*)"$/, "$1");
+    }
+    assert.ok(params.rel, `Link without a rel: ${value}`);
+    return params.rel.split(/\s+/).map((rel) => ({ rel, target: match[1] }));
+  });
+}
+
+/**
+ * Whether this site answers a GET for `url` (a path, or a URL on this site): a
+ * file in public/, a page in app/ asked for with the trailing slash it is
+ * served at, or a route of the Worker. A #fragment must be an id on the page.
+ */
+function served(url) {
+  const { origin, pathname, hash } = new URL(url, SITE_URL);
+  if (origin !== SITE_URL) return false;
+  const file = join(root, "public", pathname);
+  if (existsSync(file) && statSync(file).isFile()) return !hash;
+  if (pathname.endsWith("/")) {
+    const groups = ["", ...readdirSync(join(root, "app")).filter((name) => /^\(.+\)$/.test(name))];
+    const page = groups.map((group) => join("app", group, pathname, "page.tsx")).find((path) => existsSync(join(root, path)));
+    if (page) return !hash || read(page).includes(`id="${hash.slice(1)}"`);
+  }
+  return !hash && read("functions/worker.ts").includes(`"GET ${pathname}"`);
+}
+
+const homeLinks = () => links(headerRules()["/"]?.["Link"]);
+
+/** The API catalog the home page links to: its path, and the linkset in it. */
+function apiCatalog() {
+  const link = homeLinks().find(({ rel }) => rel === "api-catalog");
+  assert.ok(link, 'no Link with rel="api-catalog" on the home page');
+  const path = new URL(link.target, SITE_URL).pathname;
+  return { path, catalog: JSON.parse(read(join("public", path))) };
+}
+
+test("the home page's Link headers point agents to the API catalog, the API's description and docs, and llms.txt", () => {
+  const rels = homeLinks().map(({ rel }) => rel);
+  for (const rel of ["api-catalog", "service-desc", "service-doc", "describedby"]) {
+    assert.ok(rels.includes(rel), `no Link with rel="${rel}" on the home page`);
+  }
+  // service-desc is for machines (RFC 8631): the OpenAPI document, not a page about the API.
+  const desc = homeLinks().find(({ rel }) => rel === "service-desc");
+  assert.equal(new URL(desc.target, SITE_URL).pathname, "/api/v1/openapi.json");
+});
+
+test("every Link on the home page leads to something the site serves", () => {
+  const all = homeLinks();
+  assert.ok(all.length > 0, "no Link header on the home page");
+  for (const { rel, target } of all) assert.ok(served(target), `rel="${rel}" points at ${target}, which the site doesn't serve`);
+});
+
+test("the API catalog is a linkset (RFC 9264) of endpoints the site serves, with absolute links that resolve", () => {
+  const { catalog } = apiCatalog();
+  assert.ok(Array.isArray(catalog.linkset) && catalog.linkset.length > 0, 'the catalog has no "linkset" array');
+  for (const entry of catalog.linkset) {
+    assert.ok(entry.anchor?.startsWith(`${SITE_URL}/`), `an anchor must be an absolute URL on this site: ${entry.anchor}`);
+    assert.ok(served(entry.anchor), `${entry.anchor} isn't an endpoint the site serves`);
+    for (const [rel, targets] of Object.entries(entry)) {
+      if (rel === "anchor") continue;
+      assert.ok(Array.isArray(targets) && targets.length > 0, `${entry.anchor}: "${rel}" must be an array of link targets, even for one`);
+      for (const { href } of targets) {
+        assert.match(href, /^https:\/\//, `${entry.anchor}: "${rel}" must be an absolute URL`);
+        if (href.startsWith(`${SITE_URL}/`)) assert.ok(served(href), `${entry.anchor}: "${rel}" points at ${href}, which the site doesn't serve`);
+      }
+    }
+  }
+});
+
+test("the catalog lists the HTTP API, with the description the home page names and its docs, and the MCP server", () => {
+  const { catalog } = apiCatalog();
+  const entry = (path) => catalog.linkset.find(({ anchor }) => anchor === `${SITE_URL}${path}`);
+  const api = entry("/api/v1");
+  assert.ok(api, "the HTTP API (/api/v1) isn't in the catalog");
+  const desc = homeLinks().find(({ rel }) => rel === "service-desc");
+  assert.deepEqual(api["service-desc"]?.map(({ href }) => href), [new URL(desc.target, SITE_URL).href], "the catalog and the home page must name the same API description");
+  assert.ok(api["service-doc"]?.length, "the HTTP API has no service-doc link");
+  assert.ok(entry("/mcp"), "the MCP server (/mcp) isn't in the catalog");
+});
+
+test("the API catalog is served as an RFC 9727 linkset, to any origin, with the Link header RFC 9727 requires of it", () => {
+  const { path } = apiCatalog();
+  const rule = headerRules()[path];
+  assert.ok(rule, `public/_headers has no rule for ${path}: a file with no extension is served with no Content-Type at all`);
+  assert.match(rule["Content-Type"] ?? "", /^application\/linkset\+json; ?profile="https:\/\/www\.rfc-editor\.org\/info\/rfc9727"$/);
+  assert.equal(rule["Access-Control-Allow-Origin"], "*");
+  // RFC 9727 section 2: a HEAD request for the catalog gets a Link header naming it with rel="api-catalog".
+  const self = links(rule["Link"]).filter(({ rel }) => rel === "api-catalog");
+  assert.deepEqual(self.map(({ target }) => new URL(target, SITE_URL).pathname), [path]);
 });
 
 // ─── What the pages say about themselves ─────────────────────────────────────
