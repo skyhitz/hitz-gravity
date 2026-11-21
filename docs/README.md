@@ -33,9 +33,10 @@ else to the file on GitHub.
   `/vault/integration.md` and so on, and all of them in one file,
   `/llms-full.txt`. `static/llms.txt` is the hand-written index that links
   to them; the sync fails if it names a page the site doesn't publish.
-- `static/robots.txt` welcomes every crawler, AI crawlers by name, and
-  points to the sitemap. `static/_headers` sets the security headers and
-  lets browsers keep the hashed files under `/assets/` for a year.
+- `static/robots.txt` welcomes every crawler, AI crawlers by name, allows
+  search, AI input and AI training in a `Content-Signal` line, and points to
+  the sitemap. `static/_headers` sets the security headers and lets browsers
+  keep the hashed files under `/assets/` for a year.
 - Pages are served at their trailing-slash URL (`trailingSlash: true`), so
   canonical links and the sitemap name the URL that answers, not one that
   redirects.
