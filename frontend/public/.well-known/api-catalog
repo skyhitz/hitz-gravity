@@ -1,0 +1,28 @@
+{
+  "linkset": [
+    {
+      "anchor": "https://skyhitz.io/api/v1",
+      "service-desc": [
+        {
+          "href": "https://skyhitz.io/api/v1/openapi.json",
+          "type": "application/json"
+        }
+      ],
+      "service-doc": [
+        {
+          "href": "https://skyhitz.io/integrate/#api",
+          "type": "text/html"
+        }
+      ]
+    },
+    {
+      "anchor": "https://skyhitz.io/mcp",
+      "service-doc": [
+        {
+          "href": "https://skyhitz.io/integrate/#mcp",
+          "type": "text/html"
+        }
+      ]
+    }
+  ]
+}

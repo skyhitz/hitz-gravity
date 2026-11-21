@@ -5,8 +5,9 @@
 # Not applied to /api/* and /mcp: the Worker answers those and sets its own
 # headers (functions/_lib/guard.ts).
 #
-# tests/headers.test.mjs keeps this file honest: the policy must name the RPC
-# endpoint the app reads from, and must never allow framing or eval.
+# tests/site-files.test.mjs keeps this file honest: the policy must name the
+# RPC endpoint the app reads from and must never allow framing or eval, and
+# every Link must lead somewhere the site serves.
 
 # ─── Every page and file ─────────────────────────────────────────────────────
 #
@@ -40,6 +41,23 @@
   Strict-Transport-Security: max-age=31536000
   Cross-Origin-Opener-Policy: same-origin-allow-popups
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), accelerometer=(), gyroscope=(), magnetometer=(), midi=(), display-capture=(), browsing-topics=()
+
+# ─── The home page: where an agent starts ────────────────────────────────────
+#
+# Link headers (RFC 8288) tell a program that fetches skyhitz.io where the
+# machine-readable files are before it parses any HTML. Each names a relation
+# type from the IANA registry:
+#   api-catalog   the list of this site's APIs (RFC 9727)
+#   service-desc  the HTTP API's OpenAPI description, for programs (RFC 8631)
+#   service-doc   the documentation of that API, for people (RFC 8631)
+#   describedby   llms.txt: the whole site, summarized for language models
+# Cloudflare sends the four lines as one Link header, comma-separated. On the
+# home page only: under /* they would ride along with every script and image.
+/
+  Link: </.well-known/api-catalog>; rel="api-catalog"
+  Link: </api/v1/openapi.json>; rel="service-desc"
+  Link: </integrate/>; rel="service-doc"
+  Link: </llms.txt>; rel="describedby"
 
 # ─── Fingerprinted build output ──────────────────────────────────────────────
 #
@@ -80,3 +98,13 @@
 /.well-known/security.txt
   Content-Type: text/plain; charset=utf-8
   Access-Control-Allow-Origin: *
+
+# The API catalog (RFC 9727): a linkset (RFC 9264) of the HTTP API and the MCP
+# server, with the API's description and the docs of both. The file has no
+# extension, so without a Content-Type here it would be served with none.
+# RFC 9727 also requires that a HEAD request for the catalog find it named
+# in a Link header.
+/.well-known/api-catalog
+  Content-Type: application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"
+  Access-Control-Allow-Origin: *
+  Link: </.well-known/api-catalog>; rel="api-catalog"
