@@ -59,7 +59,7 @@ Monitor and Admin panels when their tab is first opened
 | `app/lib/seo.ts` | `pageMetadata()`: a page's title, description, canonical URL, Open Graph and Twitter card. Every page uses it, because Next merges metadata shallowly |
 | `app/lib/schema.ts`, `app/components/JsonLd.tsx` | schema.org structured data |
 | `app/components/About.tsx`, `app/lib/faq.ts` | The written part of the home page and its questions; both restate `WHITEPAPER.md` |
-| `app/sitemap.ts`, `public/robots.txt`, `public/llms.txt` | The sitemap (indexed pages only), the crawler rules (everyone welcome, AI crawlers by name) and the summary for language models |
+| `app/sitemap.ts`, `public/robots.txt`, `public/llms.txt` | The sitemap (indexed pages only), the crawler rules (everyone welcome, AI crawlers by name, and a `Content-Signal` line allowing search, AI input and AI training) and the summary for language models |
 | `public/og.png`, `scripts/og-image.mjs` | The link-preview image and the script that draws it |
 
 **Response headers.** `public/_headers` gives every static page a content

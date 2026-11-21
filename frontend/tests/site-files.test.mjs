@@ -95,7 +95,7 @@ test("fingerprinted build output is cached for a year, pages are not", () => {
 
 // ─── robots.txt ──────────────────────────────────────────────────────────────
 
-/** robots.txt as groups of { agents, rules }, plus the sitemap lines. */
+/** robots.txt as groups of { agents, rules, signals }, plus the sitemap lines. */
 function robots() {
   const groups = [];
   const sitemaps = [];
@@ -109,10 +109,21 @@ function robots() {
     const value = line.slice(at + 1).trim();
     if (field === "sitemap") sitemaps.push(value);
     else if (field === "user-agent") {
-      if (!group || inRules) groups.push((group = { agents: [], rules: [] }));
+      if (!group || inRules) groups.push((group = { agents: [], rules: [], signals: {} }));
       inRules = false;
       group.agents.push(value);
+    } else if (field === "content-signal") {
+      // https://contentsignals.org: name=yes or name=no, comma-separated, for
+      // the crawlers of the group the line is in.
+      assert.ok(group, "Content-Signal before any User-agent");
+      for (const pair of value.split(",")) {
+        const [name, choice] = pair.split("=").map((part) => part.trim());
+        assert.ok(["yes", "no"].includes(choice), `robots.txt: Content-Signal "${pair.trim()}" isn't name=yes or name=no`);
+        group.signals[name] = choice;
+      }
     } else {
+      // Lighthouse's robots.txt audit fails on any field it doesn't know
+      // (content-signal is one it knows, since Lighthouse 13.1).
       assert.ok(["allow", "disallow"].includes(field), `robots.txt: a validator would reject "${field}"`);
       assert.ok(group, "rule before any User-agent");
       inRules = true;
@@ -133,6 +144,13 @@ test("robots.txt welcomes everyone, AI crawlers by name, and names the sitemap",
   }
   // A named group replaces the general one for that crawler, so it must carry the same rules.
   assert.deepEqual(named.rules, everyone.rules);
+});
+
+test("robots.txt allows search, AI input and AI training, in every group", () => {
+  // A crawler reads only the group that names it, so each group has to say it.
+  for (const group of robots().groups) {
+    assert.deepEqual(group.signals, { search: "yes", "ai-input": "yes", "ai-train": "yes" }, `content signals in the group for ${group.agents[0]}`);
+  }
 });
 
 test("robots.txt closes only the account endpoints", () => {
