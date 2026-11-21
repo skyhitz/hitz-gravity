@@ -6,23 +6,22 @@
 # of the documentation in one file at https://docs.skyhitz.io/llms-full.txt.
 #
 # This site's content may be used for search, as input to AI answers, and to
-# train AI models (in the terms of https://contentsignals.org: search=yes,
-# ai-input=yes, ai-train=yes). It is stated here in words, not as a
-# Content-Signal line, because robots.txt validators reject directives they
-# don't know.
+# train AI models: the Content-Signal line in each group below says so in the
+# terms of https://contentsignals.org.
 #
 # The only paths closed are the app's own account endpoints: they answer a
 # signed-in browser, not a crawler. The public API (/api/v1), its OpenAPI
 # description and the MCP server (/mcp) are open.
 
 User-agent: *
+Content-Signal: search=yes, ai-input=yes, ai-train=yes
 Allow: /
 Disallow: /api/auth/
 Disallow: /api/gateway/
 Disallow: /api/admin/
 
 # AI crawlers and agents, by name. A crawler follows the group that names it
-# and ignores the one above, so the same rules are repeated here: an explicit
+# and ignores the one above, so the same lines are repeated here: an explicit
 # welcome for the crawlers that look for one.
 User-agent: GPTBot
 User-agent: OAI-SearchBot
@@ -48,6 +47,7 @@ User-agent: MistralAI-User
 User-agent: cohere-ai
 User-agent: YouBot
 User-agent: omgili
+Content-Signal: search=yes, ai-input=yes, ai-train=yes
 Allow: /
 Disallow: /api/auth/
 Disallow: /api/gateway/
