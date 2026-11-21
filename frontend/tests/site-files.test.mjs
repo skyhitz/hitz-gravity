@@ -92,6 +92,14 @@ test("the policy lets the page reach the RPC endpoint the code reads from", () =
   assert.ok(csp["connect-src"].includes("'self'"));
 });
 
+test("auth.md is served as markdown that any origin can read", () => {
+  // Cloudflare guesses a type from the extension; agents and the authMd check ask for text/markdown.
+  const rule = headerRules()["/auth.md"];
+  assert.ok(rule, "public/_headers needs a rule for /auth.md");
+  assert.equal(rule["Content-Type"], "text/markdown; charset=utf-8");
+  assert.equal(rule["Access-Control-Allow-Origin"], "*");
+});
+
 test("fingerprinted build output is cached for a year, pages are not", () => {
   const rules = headerRules();
   assert.equal(rules["/_next/static/*"]["Cache-Control"], "public, max-age=31536000, immutable");
@@ -178,7 +186,7 @@ test("llms.txt names both contracts and the ways to trade", () => {
   const text = read("public/llms.txt");
   assert.ok(text.includes(HITZ_CONTRACT));
   assert.ok(text.includes(VAULT_CONTRACT));
-  for (const url of ["https://skyhitz.io/mcp", "https://skyhitz.io/api/v1", "https://skyhitz.io/api/v1/openapi.json", "https://docs.skyhitz.io/llms-full.txt"]) {
+  for (const url of ["https://skyhitz.io/mcp", "https://skyhitz.io/api/v1", "https://skyhitz.io/api/v1/openapi.json", "https://skyhitz.io/auth.md", "https://docs.skyhitz.io/llms-full.txt"]) {
     assert.ok(text.includes(url), `${url} isn't linked`);
   }
 });
