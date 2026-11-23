@@ -1,10 +1,12 @@
 // The HITZ Terminal's API (/api/terminal/*) and its cron work, wired to the real bindings. The logic is
-// in _lib/terminal/ (routes.ts for requests, checkout.ts and webhooks.ts for the cron).
+// in _lib/terminal/ (routes.ts for requests; checkout.ts, notify.ts and webhooks.ts for the cron).
 
 import { terminalSecret } from "../_lib/derive";
+import { sendMail } from "../_lib/email";
 import { readSession } from "../_lib/session";
 import { liveChain } from "../_lib/terminal/chain";
 import { reconcileCheckouts } from "../_lib/terminal/checkout";
+import { notifyPurchases } from "../_lib/terminal/notify";
 import { handleTerminal, type Market } from "../_lib/terminal/routes";
 import { pruneDeliveries } from "../_lib/terminal/store";
 import { deliverAlerts, sendHttp, type Alert } from "../_lib/terminal/webhooks";
@@ -41,11 +43,23 @@ export async function handle(request: Request, env: Env, ctx: ExecutionContext):
   });
 }
 
-/** The cron's terminal work: confirm payments whose page was closed, push alerts, prune. */
+/** An email to the operator for each new payment; a failure is reported and never stops the alerts. */
+async function emailPayments(env: Env) {
+  const to = env.SUPPORT_EMAIL;
+  if (!to) return "no SUPPORT_EMAIL";
+  const html = (text: string) => `<p>${text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/\n/g, "<br>")}</p>`;
+  return notifyPurchases({
+    db: env.DB,
+    mail: (m) => sendMail(env, { to: { email: to }, subject: m.subject, text: m.text, html: html(m.text) }),
+  }).catch((err) => ({ sent: 0, error: err instanceof Error ? err.message : String(err) }));
+}
+
+/** The cron's terminal work: confirm payments whose page was closed, email new payments, push alerts, prune. */
 export async function runTerminalJobs(env: Env) {
   const m = market(env);
   const now = Date.now();
   const payments = await reconcileCheckouts(env.DB, liveChain(env, m), now);
+  const paymentEmails = await emailPayments(env);
   let alerts: unknown = "no data binding";
   if (m) {
     alerts = await deliverAlerts({
@@ -57,5 +71,5 @@ export async function runTerminalJobs(env: Env) {
     });
   }
   await pruneDeliveries(env.DB, now);
-  return { payments, alerts };
+  return { payments, paymentEmails, alerts };
 }
