@@ -261,6 +261,11 @@ XLM market, leverage and on-chain flow data, sold by plan at
   pays too; a transaction pays one checkout once. Purchases are an
   append-only ledger (`terminal_purchases`) folded into the current plan by
   `billing.ts`; the cron confirms payments whose page was closed.
+- **Payment emails:** the cron emails `SUPPORT_EMAIL` once for every
+  payment, with the plan, the price, what was paid, the account and the
+  transaction (`notify.ts`). It sends the payments after the last one
+  emailed, oldest first (a cursor in `terminal_state`); a send that fails
+  is tried again on the next run, five minutes later.
 - **Access:** wallets sign a challenge transaction that can never be
   submitted (sequence 0, an HMAC'd nonce burnt after use); email accounts
   use their session. API keys (`htz_…`) are shown once and stored as
