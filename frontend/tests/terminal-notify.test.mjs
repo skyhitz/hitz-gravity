@@ -72,6 +72,14 @@ test("a payment sends the operator one email with the plan, price, account and t
   }
 });
 
+test("a grant is not a payment and is never emailed as one", async () => {
+  const db = testDb();
+  db.raw.prepare("INSERT INTO terminal_grants (account, plan, until, note, created_at) VALUES ('GGIVEN', 'institutional', NULL, 'test', ?)").run(T0);
+  const out = fakeMail();
+  assert.deepEqual(await notifyPurchases({ db, mail: out.mail }), { sent: 0 });
+  assert.equal(out.sent.length, 0);
+});
+
 test("each payment is emailed once, however often the cron runs", async () => {
   const db = testDb();
   await pay(db, TRADER);

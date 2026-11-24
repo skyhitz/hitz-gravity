@@ -99,6 +99,16 @@ test("stale alerts are not pushed, and a webhook that keeps failing is switched 
   assert.equal(n, before, "a switched-off webhook gets nothing");
 });
 
+test("a granted account's webhooks get alerts like a paying account's", async () => {
+  const db = testDb();
+  db.raw.prepare("INSERT INTO terminal_grants (account, plan, until, note, created_at) VALUES ('GGIVEN', 'trader', NULL, 'test', ?)").run(T0 - 1000);
+  await insertWebhook(db, { id: "given", account: "GGIVEN", url: "https://given.example.org/h", format: "json", kinds: null, created_at: T0 });
+  const urls = [];
+  const r = await deliverAlerts({ db, alerts: async () => alertsAt(T0 - 1000), send: async (u) => (urls.push(u), 204), terminalSecret: SECRET, nowMs: T0 });
+  assert.equal(r.hooks, 1);
+  assert.deepEqual(urls, ["https://given.example.org/h"]);
+});
+
 test("after a downgrade an account keeps its oldest webhooks only, up to the plan's allowance", async () => {
   const db = testDb();
   db.raw.prepare("INSERT INTO terminal_purchases (account, plan, periods, usd, paid_at, checkout_id, tx_hash) VALUES ('GT', 'trader', 1, 29, ?, 'c1', 'h1')").run(T0 - 1000);
