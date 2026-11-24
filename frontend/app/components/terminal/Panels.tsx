@@ -9,7 +9,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { TimeSeriesChart } from "../TimeSeriesChart";
 import { data, UNREACHABLE, type Meta, type PlanId, type Result } from "../../lib/terminal";
-import { day, frac, pct, price, short, stamp, timeUtc, tone, usd, xlm } from "./format";
+import { day, dayYear, frac, pct, price, short, stamp, timeUtc, tone, usd, xlm } from "./format";
+import { cutByPlan, inRange, SDF_ALL_FROM, SDF_RANGES, type SdfRangeKey } from "./sdfRange";
 
 // ─── Polling ──────────────────────────────────────────────────────────────────
 
@@ -56,7 +57,8 @@ function DelayBadge({ meta }: { meta?: Meta }) {
   return <span className="shrink-0 whitespace-nowrap text-[10px] px-1.5 py-0.5 rounded bg-green/15 text-green font-mono">LIVE</span>;
 }
 
-export function Panel({ title, sub, meta, children, className = "" }: { title: string; sub?: string; meta?: Meta; children: ReactNode; className?: string }) {
+/** A data panel. `controls` (a panel's own tabs) sit in the header, left of the delay badge. */
+export function Panel({ title, sub, meta, controls, children, className = "" }: { title: string; sub?: string; meta?: Meta; controls?: ReactNode; children: ReactNode; className?: string }) {
   return (
     <section className={`bg-card border border-border rounded-lg flex flex-col min-w-0 ${className}`}>
       <header className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border-soft">
@@ -64,7 +66,10 @@ export function Panel({ title, sub, meta, children, className = "" }: { title: s
           <h3 className="text-[11px] font-semibold tracking-[0.14em] uppercase text-foreground truncate">{title}</h3>
           {sub ? <p className="text-[11px] text-muted truncate">{sub}</p> : null}
         </div>
-        <DelayBadge meta={meta} />
+        <div className="flex items-center gap-2 shrink-0">
+          {controls}
+          <DelayBadge meta={meta} />
+        </div>
       </header>
       <div className="p-3 min-w-0 flex-1">{children}</div>
     </section>
@@ -502,18 +507,45 @@ interface SdfDay {
   z: number | null;
 }
 
+/**
+ * SDF's 30-day pace on 90D, 1Y, 3Y or All. The whole history comes in one answer and the tabs filter
+ * it here, like the vault liquidity card. A plan with less daily history (Trader: a year) gets what it
+ * has, and a line saying so on the ranges it can't fill.
+ */
 export function SdfPanel({ version }: { version: number }) {
-  const res = usePoll<{ rows: SdfDay[]; latest: SdfDay | null }>("sdf", {}, 600_000, version, 365 * 86_400_000);
+  const [range, setRange] = useState<SdfRangeKey>("1Y");
+  const res = usePoll<{ rows: SdfDay[]; latest: SdfDay | null }>("sdf", { from: SDF_ALL_FROM }, 600_000, version);
+  const days = SDF_RANGES.find((r) => r.key === range)!.days;
+  const tabs = res?.ok ? (
+    <div className="mcard-seg" role="group" aria-label="Time range">
+      {SDF_RANGES.map((r) => (
+        <button key={r.key} type="button" className={range === r.key ? "on" : ""} aria-pressed={range === r.key} onClick={() => setRange(r.key)}>
+          {r.key}
+        </button>
+      ))}
+    </div>
+  ) : null;
   return (
-    <Panel title="SDF supply" sub="What SDF sent to exchanges and left there, 30 days" meta={res?.ok ? res.meta : undefined}>
+    <Panel title="SDF supply" sub="What SDF sent to exchanges and left there, 30 days" meta={res?.ok ? res.meta : undefined} controls={tabs}>
       <Body res={res} what="SDF's supply to exchanges">
-        {(d) => {
-          const pts = d.rows.filter((r) => r.pace30 !== null).map((r) => [Date.parse(`${r.day}T00:00:00Z`) / 1000, r.pace30 as number] as [number, number]);
+        {(d, m) => {
+          const shown = inRange(d.rows, days);
+          const pts = shown.filter((r) => r.pace30 !== null).map((r) => [Date.parse(`${r.day}T00:00:00Z`) / 1000, r.pace30 as number] as [number, number]);
+          const total = shown.reduce((s, r) => s + r.stayed, 0);
           return (
             <div className="space-y-2">
-              {pts.length > 1 ? <TimeSeriesChart points={pts} color="var(--orange)" label="SDF 30-day supply to exchanges" formatValue={(v) => `${xlm(v)} XLM`} formatTick={(v) => xlm(v)} /> : null}
+              {pts.length > 1 ? <TimeSeriesChart points={pts} color="var(--orange)" label="SDF 30-day supply to exchanges" formatValue={(v) => `${xlm(v)} XLM`} formatTick={(v) => xlm(v)} daily /> : null}
+              {cutByPlan(d.rows, days, m) ? (
+                <p className="text-[11px] text-muted">
+                  The {PLAN_NAME[m.plan]} plan reaches back to {dayYear(d.rows[0].day)}. Pro and up see the full history.{" "}
+                  <a href="#pricing" className="text-accent hover:underline">
+                    See plans
+                  </a>
+                </p>
+              ) : null}
               <Row k="30 days to exchanges" v={`${xlm(d.latest?.pace30)} XLM`} />
               <Row k="Against its past year" v={d.latest?.z == null ? "n/a" : `z ${d.latest.z >= 0 ? "+" : ""}${d.latest.z.toFixed(2)}`} cls={d.latest?.z != null && d.latest.z >= 1 ? "text-orange" : ""} />
+              {shown.length ? <Row k={`To exchanges since ${dayYear(shown[0].day)}`} v={`${xlm(total)} XLM`} /> : null}
             </div>
           );
         }}

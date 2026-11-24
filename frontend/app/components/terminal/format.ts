@@ -31,10 +31,16 @@ export const price = (v: number | null | undefined): string => (v === null || v 
 const hm = new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "UTC" });
 const mdhm = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "UTC" });
 const md = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+const mdy = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+
+/** An ISO day ("2025-11-24") is that UTC midnight; anything else is what Date makes of it. */
+const asDate = (ms: number | string) => new Date(typeof ms === "string" && ms.length === 10 ? `${ms}T00:00:00Z` : ms);
 
 export const timeUtc = (ms: number | string | null | undefined): string => (ms === null || ms === undefined ? "n/a" : hm.format(new Date(ms)));
 export const stamp = (ms: number | string | null | undefined): string => (ms === null || ms === undefined ? "n/a" : `${mdhm.format(new Date(ms))} UTC`);
-export const day = (ms: number | string | null | undefined): string => (ms === null || ms === undefined ? "n/a" : md.format(new Date(typeof ms === "string" && ms.length === 10 ? `${ms}T00:00:00Z` : ms)));
+export const day = (ms: number | string | null | undefined): string => (ms === null || ms === undefined ? "n/a" : md.format(asDate(ms)));
+/** `Nov 24, 2025`: a day with its year. */
+export const dayYear = (ms: number | string | null | undefined): string => (ms === null || ms === undefined ? "n/a" : mdy.format(asDate(ms)));
 
 /** Green for up, red for down, muted for flat or unknown. */
 export const tone = (v: number | null | undefined): string => (v === null || v === undefined || v === 0 ? "text-muted" : v > 0 ? "text-green" : "text-red");
