@@ -7,26 +7,15 @@
  *
  * A 2px line with a faint wash, hairline grid, right-hand value axis, and a
  * crosshair that snaps to the nearest point (pointer, or ←/→ keys; Shift
- * jumps a day of hourly points). Pixel geometry is computed from the measured
- * width so strokes stay crisp at every size.
+ * jumps a day of hourly points, or 30 days of daily ones). Pixel geometry is
+ * computed from the measured width so strokes stay crisp at every size. Time
+ * labels come from chartTime.ts: spans over 300 days name the month and year.
  */
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { axisLabel, fmtDate, fmtDateTime, fmtDay } from "./chartTime";
 
-const dateFmt = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
-const dateTimeFmt = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-  hourCycle: "h23",
-  timeZone: "UTC",
-});
-
-/** `Sep 21` (UTC). */
-export const fmtDate = (unixSeconds: number) => dateFmt.format(unixSeconds * 1000);
-/** `Sep 21, 14:00 UTC`. */
-export const fmtDateTime = (unixSeconds: number) => `${dateTimeFmt.format(unixSeconds * 1000)} UTC`;
+export { fmtDate, fmtDateTime };
 
 const CHART_H = 210;
 const PAD = { top: 12, right: 72, bottom: 26, left: 2 };
@@ -46,6 +35,7 @@ export function TimeSeriesChart({
   formatValue,
   formatTick,
   label,
+  daily = false,
 }: {
   /** [unix seconds, value], ascending. */
   points: [number, number][];
@@ -57,6 +47,8 @@ export function TimeSeriesChart({
   formatTick: (v: number) => string;
   /** What the series is, for the screen-reader summary ("HITZ price"). */
   label: string;
+  /** One point per UTC day: dates show their year and no time, and Shift+←/→ moves 30 days. */
+  daily?: boolean;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -113,7 +105,7 @@ export function TimeSeriesChart({
   const onKey = (e: React.KeyboardEvent) => {
     if (!points.length) return;
     const last = points.length - 1;
-    const step = e.shiftKey ? 24 : 1;
+    const step = e.shiftKey ? (daily ? 30 : 24) : 1;
     if (e.key === "ArrowLeft") setActive((a) => Math.max(0, (a ?? last) - step));
     else if (e.key === "ArrowRight") setActive((a) => Math.min(last, (a ?? last) + step));
     else if (e.key === "Home") setActive(0);
@@ -126,10 +118,11 @@ export function TimeSeriesChart({
   const idx = active !== null && active < points.length ? active : null;
   const hover = idx !== null ? points[idx] : null;
   const endPoint = points.at(-1);
+  const when = daily ? fmtDay : fmtDate;
   const summary =
     points.length > 1
-      ? `${label} from ${fmtDate(points[0][0])} to ${fmtDate(points[points.length - 1][0])}: ` +
-        `${formatValue(points[0][1])} to ${formatValue(points[points.length - 1][1])}. Use arrow keys to read hourly values.`
+      ? `${label} from ${when(points[0][0])} to ${when(points[points.length - 1][0])}: ` +
+        `${formatValue(points[0][1])} to ${formatValue(points[points.length - 1][1])}. Use arrow keys to read ${daily ? "daily" : "hourly"} values.`
       : "Not enough data for this range.";
 
   return (
@@ -163,7 +156,7 @@ export function TimeSeriesChart({
           ))}
           {geo.xTicks.map((t) => (
             <text key={t} className="tick" x={geo.x(t)} y={CHART_H - 6} textAnchor="middle">
-              {points.length > 48 || geo.t1 - geo.t0 > 2 * 86_400 ? fmtDate(t) : dateTimeFmt.format(t * 1000)}
+              {axisLabel(t, geo.t1 - geo.t0, points.length)}
             </text>
           ))}
           <path d={geo.area} fill={`url(#${washId})`} />
@@ -184,7 +177,7 @@ export function TimeSeriesChart({
       {geo && hover && (
         <div className="ts-tip" style={{ left: Math.min(Math.max(geo.x(hover[0]), 70), width - PAD.right - 70) }}>
           <b>{formatValue(hover[1])}</b>
-          <span>{fmtDateTime(hover[0])}</span>
+          <span>{daily ? fmtDay(hover[0]) : fmtDateTime(hover[0])}</span>
         </div>
       )}
     </div>
