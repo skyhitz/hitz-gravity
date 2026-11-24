@@ -34,10 +34,14 @@ export function inRange<T extends { day: string }>(rows: readonly T[], days: num
 /**
  * Whether the viewer's plan, not the data, cut a range short: the server narrowed the window
  * (`meta.limited`), the answer starts where that window does, and the range asks for earlier days.
+ * The range is measured back from yesterday by the server's clock (`meta.as_of`), as the gate measures
+ * the plan's window: the newest row lags a day until the daily import (06:00 UTC).
  */
-export function cutByPlan(rows: readonly { day: string }[], days: number | null, meta: { limited?: string[]; from?: string }): boolean {
+export function cutByPlan(rows: readonly { day: string }[], days: number | null, meta: { limited?: string[]; from?: string; as_of?: string }): boolean {
   if (!meta.limited?.length || !rows.length) return false;
   if (meta.from !== undefined && rows[0].day > meta.from) return false;
-  const start = rangeStart(rows[rows.length - 1].day, days);
+  const asOf = meta.as_of === undefined ? Number.NaN : Date.parse(meta.as_of);
+  const anchor = Number.isFinite(asOf) ? new Date(asOf - DAY_MS).toISOString().slice(0, 10) : rows[rows.length - 1].day;
+  const start = rangeStart(anchor, days);
   return start === null || rows[0].day > start;
 }

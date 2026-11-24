@@ -38,6 +38,20 @@ test("Trader is cut on 3Y and All only", () => {
   assert.deepEqual(SDF_RANGES.map((r) => cutByPlan(trader, r.days, traderMeta)), [false, false, true, true]);
 });
 
+test("the plan's year runs back from the server's clock, not the newest row", () => {
+  // Until the 06:00 UTC import the newest complete day is two days back, while the gate's window
+  // still starts 365 days before now (gate.ts): 1Y is no cut.
+  const lagging = span("2025-11-25", "2026-11-23");
+  const meta = { from: "2025-11-25", limited: ["history starts 2025-11-25 on the Trader plan"], as_of: "2026-11-25T03:00:00.000Z" };
+  assert.deepEqual(SDF_RANGES.map((r) => cutByPlan(lagging, r.days, meta)), [false, false, true, true]);
+  const outage = span("2025-11-25", "2026-11-21"); // three days without an import
+  assert.deepEqual(SDF_RANGES.map((r) => cutByPlan(outage, r.days, { ...meta, as_of: "2026-11-25T09:00:00.000Z" })), [false, false, true, true]);
+});
+
+test("an unreadable as_of measures from the newest row", () => {
+  assert.deepEqual(SDF_RANGES.map((r) => cutByPlan(trader, r.days, { ...traderMeta, as_of: "not a time" })), [false, false, true, true]);
+});
+
 test("a narrowed window that starts before the data is no cut", () => {
   assert.equal(cutByPlan(all, null, { from: "2020-01-01", limited: ["history starts 2020-01-01 on the Pro plan"] }), false);
   assert.equal(cutByPlan([], null, traderMeta), false);
