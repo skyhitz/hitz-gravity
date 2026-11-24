@@ -6,12 +6,12 @@
  *
  * House style: no em-dashes.
  */
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { TimeSeriesChart } from "../TimeSeriesChart";
 import { data, UNREACHABLE, type Meta, type PlanId, type Result } from "../../lib/terminal";
 import { day, dayYear, frac, pct, price, short, stamp, timeUtc, tone, usd, xlm } from "./format";
 import { cutByPlan, inRange, SDF_ALL_FROM, SDF_RANGES, type SdfRangeKey } from "./sdfRange";
-import { asking, dayGroups, emptyTape, failed, HEAD_ROWS, HEAD_SPAN_MS, olderQuery, withHead, withOlder, type Tape } from "./transferTape";
+import { asking, dayGroups, emptyTape, failed, footerAction, HEAD_ROWS, HEAD_SPAN_MS, olderQuery, withHead, withOlder, type Tape } from "./transferTape";
 
 // ─── Polling ──────────────────────────────────────────────────────────────────
 
@@ -452,6 +452,10 @@ export function TransfersPanel({ version }: { version: number }) {
   const shown = res && !res.ok && merged ? merged : res;
 
   const busy = useRef(false);
+  // The footer button, and whether it had focus when the last page landed: when that page ends the list,
+  // the button goes, and focus moves to the list instead of falling to the page.
+  const action = useRef<HTMLButtonElement | null>(null);
+  const refocus = useRef(false);
   const loadOlder = useCallback(async () => {
     if (busy.current || tape.status === "end") return;
     busy.current = true;
@@ -465,6 +469,7 @@ export function TransfersPanel({ version }: { version: number }) {
       next = (t) => failed(t, gen, e instanceof Error ? e.message : UNREACHABLE);
     }
     busy.current = false;
+    refocus.current = action.current !== null && document.activeElement === action.current;
     setTape(next);
   }, [tape]);
 
@@ -482,6 +487,11 @@ export function TransfersPanel({ version }: { version: number }) {
     io.observe(sentinel);
     return () => io.disconnect();
   }, [scroller, sentinel, tape.status, loadOlder]);
+  useEffect(() => {
+    if (tape.status !== "end" || !refocus.current) return;
+    refocus.current = false;
+    scroller?.focus({ preventScroll: true });
+  }, [tape.status, scroller]);
 
   const groups = dayGroups(tape.rows);
   const year = groups[0]?.day.slice(0, 4);
@@ -518,8 +528,8 @@ export function TransfersPanel({ version }: { version: number }) {
                 </ul>
               </section>
             ))}
-            <div ref={setSentinel} className="py-2 text-center text-muted">
-              <TapeFooter tape={tape} onOlder={() => void loadOlder()} />
+            <div ref={setSentinel} aria-live="polite" className="py-2 text-center text-muted">
+              <TapeFooter tape={tape} onOlder={() => void loadOlder()} actionRef={action} />
             </div>
           </div>
         )}
@@ -528,25 +538,27 @@ export function TransfersPanel({ version }: { version: number }) {
   );
 }
 
-/** The end of the transfers list: more to load, loading, a failure to retry, or where the history ends. */
-function TapeFooter({ tape, onOlder }: { tape: Tape<Transfer>; onOlder: () => void }) {
+/**
+ * The end of the transfers list: one button while there is more (to load, loading, or to try again, after
+ * the error), so it keeps keyboard focus as it changes; then where the history ends.
+ */
+function TapeFooter({ tape, onOlder, actionRef }: { tape: Tape<Transfer>; onOlder: () => void; actionRef: RefObject<HTMLButtonElement | null> }) {
   const link = "text-accent hover:underline";
-  if (tape.status === "loading") return <span>Loading older transfers…</span>;
-  if (tape.status === "error") {
+  const action = footerAction(tape);
+  if (action) {
     return (
       <>
-        {tape.error}{" "}
-        <button type="button" onClick={onOlder} className={link}>
-          Try again
+        {action.error ? <span>{action.error} </span> : null}
+        <button
+          ref={actionRef}
+          type="button"
+          aria-disabled={action.busy || undefined}
+          onClick={action.busy ? undefined : onOlder}
+          className={action.busy ? "cursor-default" : link}
+        >
+          {action.label}
         </button>
       </>
-    );
-  }
-  if (tape.status === "more") {
-    return (
-      <button type="button" onClick={onOlder} className={link}>
-        Load older transfers
-      </button>
     );
   }
   const end = tape.end;

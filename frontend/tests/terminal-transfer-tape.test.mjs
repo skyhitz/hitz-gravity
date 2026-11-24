@@ -4,7 +4,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ALL_FROM, asking, dayGroups, emptyTape, failed, HEAD_ROWS, HEAD_SPAN_MS, mergeRows, olderQuery, PAGE_ROWS, withHead, withOlder } from "../app/components/terminal/transferTape.ts";
+import { ALL_FROM, asking, dayGroups, emptyTape, failed, footerAction, HEAD_ROWS, HEAD_SPAN_MS, mergeRows, olderQuery, PAGE_ROWS, withHead, withOlder } from "../app/components/terminal/transferTape.ts";
 import { data } from "../app/lib/terminal.ts";
 import { handleTerminal } from "../functions/_lib/terminal/routes.ts";
 import { testDb } from "./helpers/d1.mjs";
@@ -120,6 +120,15 @@ test("a page read under another plan is not merged", () => {
   const t = first([row("2", "2026-11-24T10:00:00Z")]);
   const u = withOlder(t, t.gen, [row("1", "2026-11-20T00:00:00Z")], { plan: "free", from: "2026-11-17T12:00:00.000Z" });
   assert.deepEqual([ids(u), u.status], [["2"], "error"]);
+});
+
+test("the footer keeps one button through more, loading and error, so keyboard focus stays on it", () => {
+  const t = first([row("2", "2026-11-24T10:00:00Z")]);
+  assert.deepEqual(footerAction(t), { label: "Load older transfers", busy: false, error: null });
+  const loading = asking(t, t.gen);
+  assert.deepEqual(footerAction(loading), { label: "Loading older transfers…", busy: true, error: null });
+  assert.deepEqual(footerAction(failed(loading, t.gen, "Too many requests for now.")), { label: "Try again", busy: false, error: "Too many requests for now." });
+  assert.equal(footerAction(withOlder(t, t.gen, [], TRADER_PAGE)), null, "the end has no button");
 });
 
 test("dayGroups splits the rows by UTC day", () => {

@@ -127,6 +127,17 @@ export function withOlder<T extends TapeRow>(t: Tape<T>, gen: number, rows: read
   return { ...t, rows: merged, status: "more", strict: merged.length === t.rows.length, error: null };
 }
 
+/**
+ * The footer's button: the same one for "more", "loading" and "error", so React keeps the element, and a
+ * keyboard user's focus on it, while its label changes. Null at the end, where the footer says why.
+ */
+export function footerAction<T extends TapeRow>(t: Tape<T>): { label: string; busy: boolean; error: string | null } | null {
+  if (t.status === "end") return null;
+  if (t.status === "loading") return { label: "Loading older transfers…", busy: true, error: null };
+  if (t.status === "error") return { label: "Try again", busy: false, error: t.error };
+  return { label: "Load older transfers", busy: false, error: null };
+}
+
 /** Consecutive rows by UTC day (`2026-11-24`), for the card's day headers. */
 export function dayGroups<T extends TapeRow>(rows: readonly T[]): { day: string; rows: T[] }[] {
   const out: { day: string; rows: T[] }[] = [];
