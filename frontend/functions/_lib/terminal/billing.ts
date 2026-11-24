@@ -62,3 +62,27 @@ export function planAt(purchases: Purchase[], nowMs: number): PlanState {
   if (s.until === null || s.until <= nowMs) return FREE;
   return s;
 }
+
+/** A plan given, not bought (D1 terminal_grants): the operator's own account, a partner's trial. */
+export interface Grant {
+  plan: PlanId;
+  /** ms; null for no end. */
+  until: number | null;
+  /** ms: the grant counts from here. */
+  created_at: number;
+}
+
+/**
+ * The plan an account has: its purchases folded, or its grant while the grant runs and is higher (on
+ * the same plan, whichever runs longer). The grant sits on top and never enters the fold, so what was
+ * bought keeps its own time and shows again when the grant ends.
+ */
+export function planWith(purchases: Purchase[], grant: Grant | null, nowMs: number): PlanState {
+  const bought = planAt(purchases, nowMs);
+  if (!grant || grant.plan === "free" || grant.created_at > nowMs || (grant.until !== null && grant.until <= nowMs)) return bought;
+  const given: PlanState = { plan: grant.plan, since: grant.created_at, until: grant.until, rate: 0 };
+  const [g, b] = [PLANS[given.plan].rank, PLANS[bought.plan].rank];
+  if (g > b) return given;
+  if (g === b && (given.until === null || (bought.until !== null && given.until > bought.until))) return given;
+  return bought;
+}

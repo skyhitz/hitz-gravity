@@ -7,8 +7,7 @@
 
 import { hex, hmac } from "./auth.ts";
 import { PLANS } from "./plans.ts";
-import { planAt } from "./billing.ts";
-import { activeWebhooks, deliveredPairs, getState, purchasesOf, recordDelivery, setState, type WebhookRow } from "./store.ts";
+import { activeWebhooks, deliveredPairs, getState, plansOf, recordDelivery, setState, type WebhookRow } from "./store.ts";
 
 export const FORMATS = ["json", "discord", "slack"] as const;
 export type WebhookFormat = (typeof FORMATS)[number];
@@ -106,10 +105,9 @@ export async function deliverAlerts(d: DeliverDeps) {
     await setState(d.db, CURSOR_KEY, String(d.nowMs));
     return report;
   }
-  const plans = await purchasesOf(d.db, [...new Set(hooks.map((h) => h.account))]);
+  const plans = await plansOf(d.db, [...new Set(hooks.map((h) => h.account))], d.nowMs);
   const eligible = hooks.filter((h) => {
-    const p = planAt(plans.get(h.account) ?? [], d.nowMs);
-    const room = PLANS[p.plan].webhooks;
+    const room = PLANS[plans.get(h.account)?.plan ?? "free"].webhooks;
     // An account over its plan's allowance (after a downgrade) keeps its oldest webhooks only.
     return room > 0 && hooks.filter((x) => x.account === h.account).indexOf(h) < room;
   });

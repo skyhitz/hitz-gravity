@@ -144,6 +144,33 @@ test("API keys: Pro and up, shown once, work for data only, and stop when revoke
   assert.equal((await gone.json()).code, "invalid_key");
 });
 
+test("a grant opens a plan with no payment, for the email session and its keys, until the row goes", async () => {
+  const s = setup();
+  const account = Keypair.random().publicKey();
+  const email = { emailAccount: async () => account };
+  const give = (plan) => s.db.raw.prepare("INSERT INTO terminal_grants (account, plan, until, note, created_at) VALUES (?, ?, NULL, 'test', ?)").run(account, plan, T0 - 1000);
+  // Only a paid plan's exact id: a typo fails loudly instead of granting nothing.
+  for (const typo of ["Institutional", "free", "gold"]) assert.throws(() => give(typo), /CHECK/);
+  give("institutional");
+
+  const me = await (await s.call("/me", {}, email)).json();
+  assert.deepEqual([me.account, me.via, me.plan, me.until], [account, "email", "institutional", null]);
+  assert.deepEqual(me.limits, { api_keys: 10, webhooks: 20, requests_per_minute: 1_200, requests_per_day: 1_000_000 });
+  const labels = await s.call("/data/labels", {}, email);
+  assert.equal(labels.status, 200);
+  assert.equal((await labels.json()).meta.plan, "institutional");
+
+  const made = await (await s.call("/keys", { method: "POST", headers: { "Content-Type": "application/json", Origin: APP }, body: "{}" }, email)).json();
+  const auth = { Authorization: `Bearer ${made.key}` };
+  assert.equal((await s.call("/data/transfers?min_xlm=1000000", { headers: auth })).status, 200);
+  assert.equal(s.calls.at(-1).args.minXlm, 1_000_000);
+  assert.equal(s.db.raw.prepare("SELECT COUNT(*) AS n FROM terminal_purchases").get().n, 0, "a grant is not a purchase");
+
+  s.db.raw.prepare("DELETE FROM terminal_grants WHERE account = ?").run(account);
+  assert.equal((await (await s.call("/me", {}, email)).json()).plan, "free");
+  assert.equal((await s.call("/data/spreads", { headers: auth })).status, 402);
+});
+
 test("account changes need a session from the site itself", async () => {
   const s = setup();
   assert.equal((await s.post("/checkout", { plan: "pro", periods: 1, asset: "USDC" })).status, 401);

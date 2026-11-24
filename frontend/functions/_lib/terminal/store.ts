@@ -3,7 +3,7 @@
 //
 // Erasable TypeScript, run in Node against a real SQLite by the tests (tests/helpers/d1.mjs).
 
-import { planAt, type Purchase } from "./billing.ts";
+import { planAt, planWith, type Grant, type PlanState, type Purchase } from "./billing.ts";
 import { isPlanId, type PlanId } from "./plans.ts";
 
 export interface CheckoutRow {
@@ -114,9 +114,30 @@ export async function purchasesOf(db: D1Database, accounts: string[]): Promise<M
   return out;
 }
 
-export async function planOf(db: D1Database, account: string | null, nowMs: number) {
+/** Each account's grant (migration 0007), if it has one. Ended grants are kept and read: planWith skips them. */
+export async function grantsOf(db: D1Database, accounts: string[]): Promise<Map<string, Grant>> {
+  const out = new Map<string, Grant>();
+  if (!accounts.length) return out;
+  const marks = accounts.map((_, i) => `?${i + 1}`).join(", ");
+  const { results } = await db
+    .prepare(`SELECT account, plan, until, created_at FROM terminal_grants WHERE account IN (${marks})`)
+    .bind(...accounts)
+    .all<Grant & { account: string }>();
+  for (const r of results ?? []) {
+    if (isPlanId(r.plan)) out.set(r.account, { plan: r.plan, until: r.until, created_at: r.created_at });
+  }
+  return out;
+}
+
+/** The plan each account has at `nowMs`: its purchases and its grant (billing.ts planWith). */
+export async function plansOf(db: D1Database, accounts: string[], nowMs: number): Promise<Map<string, PlanState>> {
+  const [bought, given] = await Promise.all([purchasesOf(db, accounts), grantsOf(db, accounts)]);
+  return new Map(accounts.map((a) => [a, planWith(bought.get(a) ?? [], given.get(a) ?? null, nowMs)]));
+}
+
+export async function planOf(db: D1Database, account: string | null, nowMs: number): Promise<PlanState> {
   if (!account) return planAt([], nowMs);
-  return planAt((await purchasesOf(db, [account])).get(account) ?? [], nowMs);
+  return (await plansOf(db, [account], nowMs)).get(account) ?? planAt([], nowMs);
 }
 
 // ─── API keys ─────────────────────────────────────────────────────────────────

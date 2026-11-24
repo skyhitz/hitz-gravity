@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { cheapestWith, PERIOD_MS, PLANS, priceUsd, publicPlans } from "../functions/_lib/terminal/plans.ts";
-import { planAt } from "../functions/_lib/terminal/billing.ts";
+import { planAt, planWith } from "../functions/_lib/terminal/billing.ts";
 import { gate } from "../functions/_lib/terminal/gate.ts";
 
 const DAY = 86_400_000;
@@ -58,6 +58,26 @@ test("billing: a lower plan bought during a higher one adds time to the higher o
 test("billing: purchases are folded in payment order, whatever order they come in", () => {
   const a = [buy("trader", T0), buy("pro", T0 + 5 * DAY), buy("pro", T0 + 6 * DAY)];
   assert.deepEqual(planAt([...a].reverse(), T0 + 7 * DAY), planAt(a, T0 + 7 * DAY));
+});
+
+test("grants: a plan given runs to its end (or for good) and never lowers what was bought", () => {
+  const grant = (plan, until = null, created_at = T0) => ({ plan, until, created_at });
+  // On top of nothing: the grant's plan, with no end.
+  assert.deepEqual(planWith([], grant("institutional"), T0 + 400 * DAY), { plan: "institutional", since: T0, until: null, rate: 0 });
+  // It ends when it says, and counts from when it was made.
+  assert.equal(planWith([], grant("pro", T0 + DAY), T0 + 2 * DAY).plan, "free");
+  assert.equal(planWith([], grant("pro"), T0 - 1).plan, "free");
+  // A higher grant wins; what was bought keeps running under it and shows again once the grant ends.
+  const bought = [buy("trader", T0, 12)];
+  assert.equal(planWith(bought, grant("institutional", T0 + 10 * DAY), T0 + DAY).plan, "institutional");
+  assert.deepEqual(planWith(bought, grant("institutional", T0 + 10 * DAY), T0 + 11 * DAY), planAt(bought, T0 + 11 * DAY));
+  // A lower grant changes nothing; on the same plan, whichever runs longer shows.
+  assert.deepEqual(planWith([buy("pro", T0)], grant("trader"), T0 + DAY), planAt([buy("pro", T0)], T0 + DAY));
+  assert.equal(planWith([buy("pro", T0)], grant("pro"), T0 + DAY).until, null);
+  assert.equal(planWith([buy("pro", T0, 12)], grant("pro", T0 + DAY), T0 + 1).until, T0 + 12 * PERIOD_MS);
+  // Free is not a grant; and with no grant, the purchases alone.
+  assert.deepEqual(planWith([], grant("free"), T0 + DAY), planAt([], T0 + DAY));
+  assert.deepEqual(planWith(bought, null, T0 + DAY), planAt(bought, T0 + DAY));
 });
 
 test("gate: a free visitor gets the delayed, hourly, week-long shape, whatever is asked", () => {

@@ -270,9 +270,16 @@ XLM market, leverage and on-chain flow data, sold by plan at
   submitted (sequence 0, an HMAC'd nonce burnt after use); email accounts
   use their session. API keys (`htz_…`) are shown once and stored as
   SHA-256; a key reads data and cannot pay, make keys or change webhooks.
-- **Alerts:** the cron pushes each alert once to every paying subscriber's
-  webhooks, signed `X-Skyhitz-Signature: t=…,v1=…` (HMAC-SHA256 of
-  `t.body`) with a per-webhook secret derived from `MASTER_SECRET`.
+- **Grants:** a plan given, not bought: the operator's own account for
+  testing, a partner's trial (`terminal_grants`, migration
+  `0007_terminal_grants.sql`). While a grant runs, the account has the
+  higher of its grant and what it bought (`planWith` in `billing.ts`). A
+  grant is not a payment: it stays out of the ledger and the payment emails.
+  Nothing public writes grants; the commands are below.
+- **Alerts:** the cron pushes each alert once to every subscriber's
+  webhooks (paid or granted), signed `X-Skyhitz-Signature: t=…,v1=…`
+  (HMAC-SHA256 of `t.body`) with a per-webhook secret derived from
+  `MASTER_SECRET`.
 
 | Method | Path | What it does |
 | ------ | ---- | ------------ |
@@ -285,10 +292,18 @@ XLM market, leverage and on-chain flow data, sold by plan at
 | POST | `/api/terminal/webhooks`, `/webhooks/delete`, `/webhooks/test` | Alert webhooks |
 
 Deploy the data worker first (the binding calls its methods by name), then
-`npx wrangler d1 migrations apply hitz-data --remote` (migration
-`0006_terminal.sql`), then this Worker. `tests/terminal-*.test.mjs` run
-whole requests, payments and deliveries against SQLite with the real
-migrations.
+`npx wrangler d1 migrations apply hitz-data --remote` (migrations
+`0006_terminal.sql` and `0007_terminal_grants.sql`), then this Worker.
+`tests/terminal-*.test.mjs` run whole requests, payments and deliveries
+against SQLite with the real migrations.
+
+Give or change a grant (plan `trader`, `pro` or `institutional`; `until` in
+ms, or `NULL` for no end), and end one:
+
+```bash
+npx wrangler d1 execute hitz-data --remote --command "INSERT INTO terminal_grants (account, plan, until, note, created_at) VALUES ('G...', 'institutional', NULL, 'why', unixepoch() * 1000) ON CONFLICT (account) DO UPDATE SET plan = excluded.plan, until = excluded.until, note = excluded.note"
+npx wrangler d1 execute hitz-data --remote --command "DELETE FROM terminal_grants WHERE account = 'G...'"
+```
 
 ## Guards on every request
 
