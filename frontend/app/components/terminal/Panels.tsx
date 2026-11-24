@@ -6,11 +6,12 @@
  *
  * House style: no em-dashes.
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { TimeSeriesChart } from "../TimeSeriesChart";
 import { data, UNREACHABLE, type Meta, type PlanId, type Result } from "../../lib/terminal";
 import { day, dayYear, frac, pct, price, short, stamp, timeUtc, tone, usd, xlm } from "./format";
 import { cutByPlan, inRange, SDF_ALL_FROM, SDF_RANGES, type SdfRangeKey } from "./sdfRange";
+import { asking, dayGroups, emptyTape, failed, HEAD_ROWS, HEAD_SPAN_MS, olderQuery, withHead, withOlder, type Tape } from "./transferTape";
 
 // ─── Polling ──────────────────────────────────────────────────────────────────
 
@@ -434,32 +435,145 @@ const CLASS_LABEL: Record<string, string> = {
 
 const who = (name: string | null, cls: string, exchange: string | null, account: string) => exchange ?? name ?? CLASS_LABEL[cls] ?? short(account);
 
+/**
+ * The newest transfers, polled, and older pages as the list scrolls, back as far as the plan reaches
+ * (transferTape.ts decides which pages to ask for and how they join). The list is the liquidation tape's,
+ * with a header per UTC day that stays pinned while its rows scroll.
+ */
 export function TransfersPanel({ version }: { version: number }) {
-  const res = usePoll<{ rows: Transfer[] }>("transfers", { limit: 30 }, 120_000, version);
+  const res = usePoll<{ rows: Transfer[] }>("transfers", { limit: HEAD_ROWS }, 120_000, version, HEAD_SPAN_MS);
+  const [tape, setTape] = useState<Tape<Transfer>>(emptyTape);
+  // Each new head answer is folded in once, during render (not in an effect). A failed poll keeps the list.
+  const [merged, setMerged] = useState<Result<{ rows: Transfer[] }> | null>(null);
+  if (res?.ok && res !== merged) {
+    setMerged(res);
+    setTape(withHead(tape, res.data.rows, res.meta));
+  }
+  const shown = res && !res.ok && merged ? merged : res;
+
+  const busy = useRef(false);
+  const loadOlder = useCallback(async () => {
+    if (busy.current || tape.status === "end") return;
+    busy.current = true;
+    const gen = tape.gen;
+    setTape((t) => asking(t, gen));
+    let next: (t: Tape<Transfer>) => Tape<Transfer>;
+    try {
+      const r = await data<{ rows: Transfer[] }>("transfers", olderQuery(tape));
+      next = r.ok ? (t) => withOlder(t, gen, r.data.rows, r.meta) : (t) => failed(t, gen, r.status === 429 ? "Too many requests for now." : r.error);
+    } catch (e) {
+      next = (t) => failed(t, gen, e instanceof Error ? e.message : UNREACHABLE);
+    }
+    busy.current = false;
+    setTape(next);
+  }, [tape]);
+
+  // The footer coming within 200px of the list's bottom asks for the next page, as does a list too short to scroll.
+  const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
+  const [sentinel, setSentinel] = useState<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!scroller || !sentinel || tape.status !== "more" || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) void loadOlder();
+      },
+      { root: scroller, rootMargin: "0px 0px 200px 0px" },
+    );
+    io.observe(sentinel);
+    return () => io.disconnect();
+  }, [scroller, sentinel, tape.status, loadOlder]);
+
+  const groups = dayGroups(tape.rows);
+  const year = groups[0]?.day.slice(0, 4);
   return (
-    <Panel title="Institutional and whale flows" sub="Labeled transfers, newest first" meta={res?.ok ? res.meta : undefined}>
-      <Body res={res} what="Whale transfers">
-        {(d) =>
-          d.rows.length ? (
-            <ul className="text-[11px] font-mono max-h-[300px] overflow-y-auto divide-y divide-border-soft">
-              {d.rows.map((t) => (
-                <li key={t.op_id} className="py-1.5 space-y-0.5">
-                  <div className="flex justify-between gap-2">
-                    <span className="text-muted">{stamp(t.closed_at)}</span>
-                    <span className={`tabular-nums ${t.flow_class === "to_exchange" ? "text-red" : t.flow_class === "from_exchange" ? "text-green" : ""}`}>{xlm(t.xlm)} XLM</span>
-                  </div>
-                  <div className="truncate">
-                    {who(t.from_name, t.from_class, t.from_exchange, t.from_account)} <span className="text-muted">to</span> {who(t.to_name, t.to_class, t.to_exchange, t.to_account)}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-xs text-muted">No transfers of this size in the last day.</p>
-          )
-        }
+    <Panel title="Institutional and whale flows" sub="Labeled transfers, newest first" meta={shown?.ok ? shown.meta : undefined}>
+      <Body res={shown} what="Whale transfers">
+        {() => (
+          <div
+            ref={setScroller}
+            tabIndex={0}
+            role="region"
+            aria-label="Transfers, newest first. Scroll for older ones."
+            aria-busy={tape.status === "loading"}
+            className="text-[11px] font-mono max-h-[300px] overflow-y-auto rounded outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            {groups.map((g) => (
+              <section key={g.day}>
+                <h4 className="sticky top-0 z-10 flex justify-between bg-card border-b border-border-soft py-1 text-[10px] uppercase tracking-[0.14em] text-muted">
+                  <span>{g.day.slice(0, 4) === year ? day(g.day) : dayYear(g.day)}</span>
+                  <span>UTC</span>
+                </h4>
+                <ul className="divide-y divide-border-soft">
+                  {g.rows.map((t) => (
+                    <li key={t.op_id} className="py-1.5 space-y-0.5">
+                      <div className="flex justify-between gap-2">
+                        <span className="text-muted">{timeUtc(t.closed_at)}</span>
+                        <span className={`tabular-nums ${t.flow_class === "to_exchange" ? "text-red" : t.flow_class === "from_exchange" ? "text-green" : ""}`}>{xlm(t.xlm)} XLM</span>
+                      </div>
+                      <div className="truncate">
+                        {who(t.from_name, t.from_class, t.from_exchange, t.from_account)} <span className="text-muted">to</span> {who(t.to_name, t.to_class, t.to_exchange, t.to_account)}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
+            <div ref={setSentinel} className="py-2 text-center text-muted">
+              <TapeFooter tape={tape} onOlder={() => void loadOlder()} />
+            </div>
+          </div>
+        )}
       </Body>
     </Panel>
+  );
+}
+
+/** The end of the transfers list: more to load, loading, a failure to retry, or where the history ends. */
+function TapeFooter({ tape, onOlder }: { tape: Tape<Transfer>; onOlder: () => void }) {
+  const link = "text-accent hover:underline";
+  if (tape.status === "loading") return <span>Loading older transfers…</span>;
+  if (tape.status === "error") {
+    return (
+      <>
+        {tape.error}{" "}
+        <button type="button" onClick={onOlder} className={link}>
+          Try again
+        </button>
+      </>
+    );
+  }
+  if (tape.status === "more") {
+    return (
+      <button type="button" onClick={onOlder} className={link}>
+        Load older transfers
+      </button>
+    );
+  }
+  const end = tape.end;
+  const plan = end ? (PLAN_NAME[end.plan as PlanId] ?? end.plan) : "";
+  const plans = (
+    <>
+      {" "}
+      <a href="#pricing" className={link}>
+        See plans
+      </a>
+    </>
+  );
+  if (tape.rows.length) {
+    return end?.cut ? (
+      <>
+        The {plan} plan reaches back to {dayYear(end.from)}.{plans}
+      </>
+    ) : (
+      <span>Start of the record.</span>
+    );
+  }
+  return end?.cut ? (
+    <>
+      No transfers of this size since {dayYear(end.from)}, as far back as the {plan} plan reaches.{plans}
+    </>
+  ) : (
+    <span>No transfers of this size on record.</span>
   );
 }
 
