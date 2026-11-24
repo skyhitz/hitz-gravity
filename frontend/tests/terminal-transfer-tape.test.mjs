@@ -5,6 +5,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ALL_FROM, asking, dayGroups, emptyTape, failed, HEAD_ROWS, HEAD_SPAN_MS, mergeRows, olderQuery, PAGE_ROWS, withHead, withOlder } from "../app/components/terminal/transferTape.ts";
+import { data } from "../app/lib/terminal.ts";
+import { handleTerminal } from "../functions/_lib/terminal/routes.ts";
+import { testDb } from "./helpers/d1.mjs";
+import { fakeKv } from "./helpers/kv.mjs";
 
 const row = (op_id, closed_at, extra = {}) => ({ op_id, closed_at, ...extra });
 const ids = (t) => t.rows.map((r) => r.op_id);
@@ -122,4 +126,101 @@ test("dayGroups splits the rows by UTC day", () => {
   const g = dayGroups([row("3", "2026-11-24T00:10:00Z"), row("2", "2026-11-23T23:59:59Z"), row("1", "2026-11-23T00:00:00Z")]);
   assert.deepEqual(g.map((d) => [d.day, d.rows.map((r) => r.op_id)]), [["2026-11-24", ["3"]], ["2026-11-23", ["2", "1"]]]);
   assert.deepEqual(dayGroups([]), []);
+});
+
+// ─── End to end ───────────────────────────────────────────────────────────────
+// Through the real API (functions/_lib/terminal/routes.ts and the plan gate) with a fake data worker that
+// answers the way terminalQueries.transfers does: what each plan sees when it scrolls to the end, every
+// transfer once, in order. Three transfers share each second, so page edges split them.
+
+const NOW = Date.UTC(2026, 10, 24, 12, 0, 0);
+const DAY = 86_400_000;
+const HOUR = 3_600_000;
+const ACCOUNT = `G${"A".repeat(55)}`;
+const isoSecond = (ms) => `${new Date(ms).toISOString().slice(0, 19)}Z`;
+let nextOp = 1_000_000;
+
+/** `per` transfers of `xlm` sharing a second, every `everyMs`, 17 seconds past the minute, up to NOW. */
+const series = (fromMs, everyMs, per, xlm) => {
+  const rows = [];
+  for (let t = fromMs + 17_000; t < NOW; t += everyMs) for (let i = 0; i < per; i++) rows.push({ op_id: String(nextOp++), closed_at: isoSecond(t), xlm, flow_class: "to_exchange" });
+  return rows;
+};
+
+function serve(rows, plan) {
+  const db = testDb();
+  if (plan !== "free") db.raw.prepare("INSERT INTO terminal_grants (account, plan, until, note, created_at) VALUES (?, ?, NULL, 'test', ?)").run(ACCOUNT, plan, NOW - 1000);
+  const market = {
+    async terminalTransfers({ fromMs, toMs, minXlm, limit }) {
+      const to = Math.min(toMs ?? NOW, NOW);
+      const from = Math.min(to, Math.max(fromMs ?? to - 7 * DAY, to - 400 * DAY));
+      const hits = rows.filter((r) => r.closed_at >= isoSecond(from) && r.closed_at < isoSecond(to) && r.xlm >= Math.max(1_000_000, minXlm ?? 10_000_000));
+      // ORDER BY closed_at DESC: transfers sharing a second come back in any order (here, oldest op id first).
+      hits.sort((a, b) => b.closed_at.localeCompare(a.closed_at) || Number(a.op_id) - Number(b.op_id));
+      return { window: { fromMs: from, toMs: to, minXlm }, rows: hits.slice(0, Math.min(500, limit ?? 100)) };
+    },
+  };
+  const cache = new Map();
+  const deps = {
+    db,
+    market,
+    chain: () => {
+      throw new Error("no chain here");
+    },
+    secret: "e".repeat(64),
+    passphrase: "Public Global Stellar Network ; September 2015",
+    appUrl: "https://skyhitz.io",
+    kv: fakeKv(),
+    emailAccount: async () => (plan === "free" ? null : ACCOUNT),
+    horizonAccount: async () => null,
+    send: async () => 200,
+    cache: { match: async (k) => cache.get(k)?.clone(), put: async (k, r) => void cache.set(k, r) },
+    nowMs: NOW,
+    waitUntil: (p) => p,
+  };
+  globalThis.fetch = async (url, init) => handleTerminal(new Request(`https://skyhitz.io${url}`, init), deps);
+}
+
+/** What the card does: the head, then older pages until the tape ends. */
+async function scrollToEnd() {
+  const head = await data("transfers", { limit: HEAD_ROWS, from: NOW - HEAD_SPAN_MS });
+  assert.ok(head.ok, JSON.stringify(head));
+  let t = withHead(emptyTape(), head.data.rows, head.meta);
+  for (let pages = 0; t.status === "more"; pages++) {
+    assert.ok(pages < 100, "the tape reaches an end");
+    const r = await data("transfers", olderQuery(t));
+    assert.ok(r.ok, JSON.stringify(r));
+    t = withOlder(t, t.gen, r.data.rows, r.meta);
+  }
+  return t;
+}
+
+const expected = (rows, fromMs, toMs, min) =>
+  rows
+    .filter((r) => r.closed_at >= isoSecond(fromMs) && r.closed_at < isoSecond(toMs) && r.xlm >= min)
+    .sort((a, b) => b.closed_at.localeCompare(a.closed_at) || Number(b.op_id) - Number(a.op_id))
+    .map((r) => r.op_id);
+
+test("Free scrolls through its week of 50M+ transfers, an hour behind, each once", async () => {
+  const rows = [...series(NOW - 10 * DAY, HOUR, 3, 60_000_000), ...series(NOW - 10 * DAY, 2 * HOUR, 1, 20_000_000)];
+  serve(rows, "free");
+  const t = await scrollToEnd();
+  assert.deepEqual(ids(t), expected(rows, NOW - 7 * DAY, NOW - HOUR, 50_000_000));
+  assert.deepEqual(t.end, { plan: "free", from: new Date(NOW - 7 * DAY).toISOString(), cut: true });
+});
+
+test("Trader scrolls back 90 days of 10M+ transfers, each once", async () => {
+  const rows = [...series(NOW - 120 * DAY, 3 * HOUR, 3, 12_000_000), ...series(NOW - 120 * DAY, 5 * HOUR, 1, 2_000_000)];
+  serve(rows, "trader");
+  const t = await scrollToEnd();
+  assert.deepEqual(ids(t), expected(rows, NOW - 90 * DAY, NOW, 10_000_000));
+  assert.deepEqual(t.end, { plan: "trader", from: new Date(NOW - 90 * DAY).toISOString(), cut: true });
+});
+
+test("Institutional scrolls past the data worker's 400 days to the start of the record", async () => {
+  const rows = series(NOW - 900 * DAY, 11 * HOUR, 2, 1_500_000);
+  serve(rows, "institutional");
+  const t = await scrollToEnd();
+  assert.deepEqual(ids(t), expected(rows, 0, NOW, 1_000_000));
+  assert.deepEqual(t.end, { plan: "institutional", from: "2015-01-01T00:00:00.000Z", cut: false });
 });
