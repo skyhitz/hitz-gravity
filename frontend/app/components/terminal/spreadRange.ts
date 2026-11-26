@@ -47,15 +47,17 @@ export function spreadQuery(key: SpreadRangeKey, fine: boolean): SpreadQuery {
 }
 
 /**
- * Whether the viewer's plan cut a tab's window short: the server narrowed it (`meta.limited`), the data
- * reaches back to where the narrowed window starts (the plan, not the data, set the start), and that
- * start is more than an hour after what the tab asked for (`as_of` minus its span), so a browser clock
- * a few seconds off the server's is no cut. Anything unreadable is no cut.
+ * Whether the viewer's plan cut a tab's window short. The data must reach back to where the answer's
+ * window starts (else the data, not the plan, set the start). A tab with a span is cut when that start
+ * is more than an hour after what it asked for (`as_of` minus its span): a browser clock a few seconds
+ * off the server's is no cut, and an answer the edge cache filled from another request with the same
+ * gated window still counts, though it may lack `meta.limited`. All asks for everything, so only the
+ * server's `meta.limited` can say it was narrowed. Anything unreadable is no cut.
  */
 export function spreadCut(rows: readonly { t: number }[], q: { spanMs?: number; binMs: number }, meta: { limited?: string[]; from?: string; as_of?: string }): boolean {
-  if (!meta.limited?.length || !rows.length || meta.from === undefined) return false;
+  if (!rows.length || meta.from === undefined) return false;
   const from = Date.parse(meta.from);
   if (!Number.isFinite(from) || rows[0].t > from + q.binMs) return false;
-  const asked = q.spanMs === undefined ? -Infinity : Date.parse(meta.as_of ?? "") - q.spanMs;
-  return from - asked > HOUR;
+  if (q.spanMs === undefined) return !!meta.limited?.length;
+  return from - (Date.parse(meta.as_of ?? "") - q.spanMs) > HOUR;
 }

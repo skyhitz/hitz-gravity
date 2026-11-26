@@ -3,6 +3,8 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { gate } from "../functions/_lib/terminal/gate.ts";
+import { PLANS } from "../functions/_lib/terminal/plans.ts";
 import { spreadCut, spreadDefault, spreadQuery } from "../app/components/terminal/spreadRange.ts";
 
 const MIN = 60_000, HOUR = 60 * MIN, DAY = 24 * HOUR;
@@ -39,6 +41,17 @@ test("clock drift is no cut", () => {
 
 test("the data starting after the plan's reach is no cut (Pro on All)", () => {
   assert.equal(spreadCut(bins(Date.UTC(2026, 5, 12), A, DAY), spreadQuery("All", true), cutTo(365, "Pro")), false);
+});
+
+test("Free's 30D served 7D's cached answer is still a cut", () => {
+  // Free answers are edge-cached by the gated window, not by what was asked (routes.ts), so a 30D request
+  // narrowed to 7 days can get the answer a 7D request filled, from a browser clock 3 s ahead of the
+  // server's: that answer was never narrowed and has no meta.limited.
+  const g7 = gate(PLANS.free, "spreads", { resolution: "1h", from: String(A + 3_000 - 7 * DAY) }, A);
+  assert.equal(g7.ok && g7.meta.limited, undefined);
+  const cached = { ...g7.meta, as_of: AS_OF };
+  assert.equal(spreadCut(bins(A - 7 * DAY, A, HOUR), spreadQuery("30D", false), cached), true);
+  assert.equal(spreadCut(bins(A - 7 * DAY, A, HOUR), spreadQuery("7D", false), cached), false);
 });
 
 test("nothing narrowed, only the bins, or nothing to show: no cut", () => {

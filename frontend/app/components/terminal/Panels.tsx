@@ -11,6 +11,7 @@ import { TimeSeriesChart } from "../TimeSeriesChart";
 import { data, UNREACHABLE, type Meta, type PlanId, type PublicPlan, type Result } from "../../lib/terminal";
 import { day, dayYear, frac, pct, price, short, stamp, timeUtc, tone, usd, xlm } from "./format";
 import { furtherPlan } from "./planReach";
+import { nextPollMs, retryable } from "./pollTiming";
 import { cutByPlan, inRange, SDF_ALL_FROM, SDF_RANGES, type SdfRangeKey } from "./sdfRange";
 import { spreadCut, spreadDefault, spreadQuery, SPREAD_RANGES, type SpreadQuery, type SpreadRangeKey } from "./spreadRange";
 import { asking, dayGroups, emptyTape, failed, footerAction, HEAD_ROWS, HEAD_SPAN_MS, olderQuery, withHead, withOlder, type Tape } from "./transferTape";
@@ -38,18 +39,21 @@ export function usePollState<T>(
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const tick = async () => {
+      let failed = false;
       try {
         const p = JSON.parse(key) as Record<string, string | number | undefined>;
         if (spanMs) p.from = Date.now() - spanMs;
         const r = await data<T>(dataset, p);
+        failed = retryable(r);
         // A failure on the server's side keeps this window's last good answer; the next tick retries.
         if (alive) setState((prev) => (!r.ok && r.status >= 500 && prev?.id === id && prev.res.ok ? prev : { id, res: r }));
       } catch (e) {
+        failed = true;
         // Unreachable: keep this window's last answer, or say why there's none yet. The next tick retries.
         if (alive) setState((prev) => (prev?.id === id ? prev : { id, res: { ok: false, status: 0, code: "unreachable", error: e instanceof Error ? e.message : UNREACHABLE } }));
       }
-      if (alive && document.visibilityState !== "hidden") timer = setTimeout(tick, everyMs);
-      else if (alive) timer = setTimeout(tick, everyMs * 4);
+      // A failure retries within a minute, even on a tab that refreshes every 15 (pollTiming.ts).
+      if (alive) timer = setTimeout(tick, nextPollMs(everyMs, failed, document.visibilityState === "hidden"));
     };
     tick();
     return () => {
