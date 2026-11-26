@@ -105,7 +105,7 @@ export default function TerminalApp() {
 
         <div className="grid gap-3 lg:grid-cols-3">
           <div className="space-y-3 min-w-0">
-            <SpreadsPanel version={version} fine={paid} />
+            <SpreadsPanel version={version} fine={paid} plans={plans} />
             <BooksPanel version={version} />
             <FlowsPanel version={version} />
           </div>
@@ -117,7 +117,7 @@ export default function TerminalApp() {
           <div className="space-y-3 min-w-0">
             <AlertsPanel version={version} />
             <TransfersPanel version={version} />
-            <SdfPanel version={version} />
+            <SdfPanel version={version} plans={plans} />
           </div>
         </div>
 
