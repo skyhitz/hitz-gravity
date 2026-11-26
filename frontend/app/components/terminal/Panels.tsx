@@ -8,21 +8,33 @@
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { TimeSeriesChart } from "../TimeSeriesChart";
-import { data, UNREACHABLE, type Meta, type PlanId, type Result } from "../../lib/terminal";
+import { data, UNREACHABLE, type Meta, type PlanId, type PublicPlan, type Result } from "../../lib/terminal";
 import { day, dayYear, frac, pct, price, short, stamp, timeUtc, tone, usd, xlm } from "./format";
+import { furtherPlan } from "./planReach";
 import { cutByPlan, inRange, SDF_ALL_FROM, SDF_RANGES, type SdfRangeKey } from "./sdfRange";
+import { spreadCut, spreadDefault, spreadQuery, SPREAD_RANGES, type SpreadQuery, type SpreadRangeKey } from "./spreadRange";
 import { asking, dayGroups, emptyTape, failed, footerAction, HEAD_ROWS, HEAD_SPAN_MS, olderQuery, withHead, withOlder, type Tape } from "./transferTape";
 
 // ─── Polling ──────────────────────────────────────────────────────────────────
 
 /**
  * Poll a dataset. `params` must be stable (no timestamps): a window is given as `spanMs`, turned into
- * `from` at each fetch, so re-renders never restart the poll.
+ * `from` at each fetch, so re-renders never restart the poll. `current` says whether the answer on hand
+ * is for these params (false while a new window loads); with `enabled` false it makes no requests.
  */
-export function usePoll<T>(dataset: string, params: Record<string, string | number | undefined>, everyMs: number, version: number, spanMs?: number): Result<T> | null {
-  const [res, setRes] = useState<Result<T> | null>(null);
+export function usePollState<T>(
+  dataset: string,
+  params: Record<string, string | number | undefined>,
+  everyMs: number,
+  version: number,
+  spanMs?: number,
+  enabled = true,
+): { res: Result<T> | null; current: boolean } {
+  const [state, setState] = useState<{ id: string; res: Result<T> } | null>(null);
   const key = JSON.stringify(params);
+  const id = `${dataset} ${key} ${spanMs ?? ""}`;
   useEffect(() => {
+    if (!enabled) return;
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const tick = async () => {
@@ -30,11 +42,11 @@ export function usePoll<T>(dataset: string, params: Record<string, string | numb
         const p = JSON.parse(key) as Record<string, string | number | undefined>;
         if (spanMs) p.from = Date.now() - spanMs;
         const r = await data<T>(dataset, p);
-        // A failure on the server's side keeps the last good answer on screen; the next tick retries.
-        if (alive) setRes((prev) => (!r.ok && r.status >= 500 && prev?.ok ? prev : r));
+        // A failure on the server's side keeps this window's last good answer; the next tick retries.
+        if (alive) setState((prev) => (!r.ok && r.status >= 500 && prev?.id === id && prev.res.ok ? prev : { id, res: r }));
       } catch (e) {
-        // Unreachable: keep the last answer, or say why there's none yet. The next tick retries.
-        if (alive) setRes((prev) => prev ?? { ok: false, status: 0, code: "unreachable", error: e instanceof Error ? e.message : UNREACHABLE });
+        // Unreachable: keep this window's last answer, or say why there's none yet. The next tick retries.
+        if (alive) setState((prev) => (prev?.id === id ? prev : { id, res: { ok: false, status: 0, code: "unreachable", error: e instanceof Error ? e.message : UNREACHABLE } }));
       }
       if (alive && document.visibilityState !== "hidden") timer = setTimeout(tick, everyMs);
       else if (alive) timer = setTimeout(tick, everyMs * 4);
@@ -44,8 +56,13 @@ export function usePoll<T>(dataset: string, params: Record<string, string | numb
       alive = false;
       if (timer) clearTimeout(timer);
     };
-  }, [dataset, key, everyMs, version, spanMs]);
-  return res;
+  }, [dataset, key, everyMs, version, spanMs, enabled, id]);
+  if (!enabled) return { res: null, current: false };
+  return { res: state?.res ?? null, current: state?.id === id };
+}
+
+export function usePoll<T>(dataset: string, params: Record<string, string | number | undefined>, everyMs: number, version: number, spanMs?: number): Result<T> | null {
+  return usePollState<T>(dataset, params, everyMs, version, spanMs).res;
 }
 
 // ─── Frame ────────────────────────────────────────────────────────────────────
@@ -58,22 +75,40 @@ function DelayBadge({ meta }: { meta?: Meta }) {
   return <span className="shrink-0 whitespace-nowrap text-[10px] px-1.5 py-0.5 rounded bg-green/15 text-green font-mono">LIVE</span>;
 }
 
-/** A data panel. `controls` (a panel's own tabs) sit in the header, left of the delay badge. */
+/**
+ * A data panel. `controls` (a panel's own tabs) sit in the header, left of the delay badge, and move to
+ * their own line under the title when the panel is too narrow for both.
+ */
 export function Panel({ title, sub, meta, controls, children, className = "" }: { title: string; sub?: string; meta?: Meta; controls?: ReactNode; children: ReactNode; className?: string }) {
   return (
     <section className={`bg-card border border-border rounded-lg flex flex-col min-w-0 ${className}`}>
-      <header className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border-soft">
-        <div className="min-w-0">
+      <header className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 px-3 py-2 border-b border-border-soft">
+        <div className="min-w-0 flex-1 basis-32">
           <h3 className="text-[11px] font-semibold tracking-[0.14em] uppercase text-foreground truncate">{title}</h3>
           {sub ? <p className="text-[11px] text-muted truncate">{sub}</p> : null}
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0 ml-auto">
           {controls}
           <DelayBadge meta={meta} />
         </div>
       </header>
       <div className="p-3 min-w-0 flex-1">{children}</div>
     </section>
+  );
+}
+
+/**
+ * The line under a chart whose window the viewer's plan cut short, naming the plan that reaches further
+ * back (from the plan table: planReach.ts).
+ */
+function PlanCut({ plan, since, further }: { plan: PlanId; since: string; further: { name: string; all: boolean } | null }) {
+  return (
+    <p className="text-[11px] text-muted">
+      The {PLAN_NAME[plan]} plan reaches back to {since}.{further ? ` ${further.name} and up ${further.all ? "see the full history" : "reach further back"}.` : ""}{" "}
+      <a href="#pricing" className="text-accent hover:underline">
+        See plans
+      </a>
+    </p>
   );
 }
 
@@ -180,20 +215,38 @@ interface SpreadRow {
   dex_price: number;
 }
 
-export function SpreadsPanel({ version, fine }: { version: number; fine: boolean }) {
-  const res = usePoll<{ rows: SpreadRow[] }>("spreads", { resolution: fine ? "5m" : "1h" }, 60_000, version, (fine ? 1 : 7) * 86_400_000);
+/**
+ * Kraken's gap to the Stellar DEX on 1D, 7D, 30D, 90D or All. The venue table keeps today's poll (a paid
+ * plan's day in 5-minute bins, Free's hourly week); a tab that differs asks for its own window in a
+ * second poll (spreadRange.ts), and its chart stays dimmed until that window arrives.
+ */
+export function SpreadsPanel({ version, fine, plans }: { version: number; fine: boolean; plans: PublicPlan[] | null }) {
+  const [picked, setPicked] = useState<SpreadRangeKey | null>(null);
+  const home = spreadDefault(fine);
+  const range = picked ?? home;
+  const live = spreadQuery(home, fine);
+  const tab = spreadQuery(range, fine);
+  const res = usePoll<{ rows: SpreadRow[] }>("spreads", live.params, live.everyMs, version, live.spanMs);
+  const own = usePollState<{ rows: SpreadRow[] }>("spreads", tab.params, tab.everyMs, version, tab.spanMs, range !== home);
+  const chart = range === home ? { res, current: true } : own;
+  const tabs = res?.ok ? (
+    <div className="mcard-seg" role="group" aria-label="Time range">
+      {SPREAD_RANGES.map((r) => (
+        <button key={r.key} type="button" className={range === r.key ? "on" : ""} aria-pressed={range === r.key} onClick={() => setPicked(r.key)}>
+          {r.key}
+        </button>
+      ))}
+    </div>
+  ) : null;
   return (
-    <Panel title="CEX vs Stellar DEX" sub="Kraken and Coinbase against the DEX, % gap" meta={res?.ok ? res.meta : undefined}>
+    <Panel title="CEX vs Stellar DEX" sub="Kraken and Coinbase against the DEX, % gap" meta={res?.ok ? res.meta : undefined} controls={tabs}>
       <Body res={res} what="Spreads">
         {(d) => {
           const venues = [...new Set(d.rows.map((r) => r.venue))];
           const last = venues.map((v) => d.rows.filter((r) => r.venue === v).at(-1)!);
-          const kraken = d.rows.filter((r) => r.venue === "kraken");
           return (
             <div className="space-y-3">
-              {kraken.length > 1 ? (
-                <TimeSeriesChart points={kraken.map((r) => [r.t / 1000, r.gap_pct])} color="var(--accent)" label="Kraken vs DEX gap" formatValue={(v) => pct(v, 3)} formatTick={(v) => pct(v, 2)} />
-              ) : null}
+              <SpreadChart res={chart.res} current={chart.current} q={tab} plans={plans} />
               <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-3 text-[11px] font-mono">
                 <span className="text-muted">venue</span>
                 <span className="text-muted text-right">price</span>
@@ -213,6 +266,29 @@ export function SpreadsPanel({ version, fine }: { version: number; fine: boolean
         }}
       </Body>
     </Panel>
+  );
+}
+
+/** One tab's chart: a shimmer until its window arrives, why it failed, or the gap, dimmed while stale. */
+function SpreadChart({ res, current, q, plans }: { res: Result<{ rows: SpreadRow[] }> | null; current: boolean; q: SpreadQuery; plans: PublicPlan[] | null }) {
+  if (!res) return <div className="shimmer h-[210px]" />;
+  if (!res.ok) return <p className="text-xs text-muted py-4">{res.status === 429 ? "Too many requests for now; it will refresh shortly." : res.error}</p>;
+  const kraken = res.data.rows.filter((r) => r.venue === "kraken");
+  const cut = current && spreadCut(res.data.rows, q, res.meta);
+  return (
+    <div className={`space-y-2 transition-opacity ${current ? "" : "opacity-40"}`}>
+      {kraken.length > 1 ? (
+        <TimeSeriesChart
+          points={kraken.map((r) => [r.t / 1000, r.gap_pct])}
+          color="var(--accent)"
+          label="Kraken vs DEX gap"
+          formatValue={(v) => pct(v, 3)}
+          formatTick={(v) => pct(v, 2)}
+          daily={q.params.resolution === "1d"}
+        />
+      ) : null}
+      {cut ? <PlanCut plan={res.meta.plan} since={dayYear(res.data.rows[0].t)} further={furtherPlan(plans, res.meta.plan, "intraday_days")} /> : null}
+    </div>
   );
 }
 
@@ -638,7 +714,7 @@ interface SdfDay {
  * it here, like the vault liquidity card. A plan with less daily history (Trader: a year) gets what it
  * has, and a line saying so on the ranges it can't fill.
  */
-export function SdfPanel({ version }: { version: number }) {
+export function SdfPanel({ version, plans }: { version: number; plans: PublicPlan[] | null }) {
   const [range, setRange] = useState<SdfRangeKey>("1Y");
   const res = usePoll<{ rows: SdfDay[]; latest: SdfDay | null }>("sdf", { from: SDF_ALL_FROM }, 600_000, version);
   const days = SDF_RANGES.find((r) => r.key === range)!.days;
@@ -661,14 +737,7 @@ export function SdfPanel({ version }: { version: number }) {
           return (
             <div className="space-y-2">
               {pts.length > 1 ? <TimeSeriesChart points={pts} color="var(--orange)" label="SDF 30-day supply to exchanges" formatValue={(v) => `${xlm(v)} XLM`} formatTick={(v) => xlm(v)} daily /> : null}
-              {cutByPlan(d.rows, days, m) ? (
-                <p className="text-[11px] text-muted">
-                  The {PLAN_NAME[m.plan]} plan reaches back to {dayYear(d.rows[0].day)}. Pro and up see the full history.{" "}
-                  <a href="#pricing" className="text-accent hover:underline">
-                    See plans
-                  </a>
-                </p>
-              ) : null}
+              {cutByPlan(d.rows, days, m) ? <PlanCut plan={m.plan} since={dayYear(d.rows[0].day)} further={furtherPlan(plans, m.plan, "daily_days")} /> : null}
               <Row k="30 days to exchanges" v={`${xlm(d.latest?.pace30)} XLM`} />
               <Row k="Against its past year" v={d.latest?.z == null ? "n/a" : `z ${d.latest.z >= 0 ? "+" : ""}${d.latest.z.toFixed(2)}`} cls={d.latest?.z != null && d.latest.z >= 1 ? "text-orange" : ""} />
               {shown.length ? <Row k={`To exchanges since ${dayYear(shown[0].day)}`} v={`${xlm(total)} XLM`} /> : null}
