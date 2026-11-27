@@ -16,6 +16,7 @@ import type { Me, PublicPlan } from "../../lib/terminal";
 import { KeysAndHooks, Pricing, useTerminalSignIn } from "./Account";
 import { AlertsPanel, BooksPanel, FeedPanel, FlowsPanel, LeveragePanel, LiquidationsPanel, OverviewStrip, SdfPanel, SpreadsPanel, TransfersPanel } from "./Panels";
 import { stamp } from "./format";
+import { AuctionsPanel, BorrowersPanel, DefiPanel, LendingPanel } from "./LendingPanels";
 
 const SITE = "https://skyhitz.io";
 
@@ -31,6 +32,11 @@ const ENDPOINTS: [string, string][] = [
   ["GET /data/sdf?from=2024-01-01", "SDF's supply to exchanges and its pace"],
   ["GET /data/alerts", "Deposits, withdrawals, SDF, liquidation bursts, spread spikes"],
   ["GET /data/labels", "The labeled wallet book (Institutional)"],
+  ["GET /data/defi?from=2026-01-01", "The Stellar DeFi map: each protocol's holdings and debt by day"],
+  ["GET /data/lending?resolution=1h|1d", "Blend's reserves: supplied, borrowed, rates, utilization"],
+  ["GET /data/ladder?resolution=1h|1d", "On-chain debt by how far XLM must fall to liquidate it"],
+  ["GET /data/auctions?limit=100", "Each Blend liquidation auction (fillers on Institutional)"],
+  ["GET /data/borrowers?day=2026-01-01", "Every on-chain borrower and its liquidation price (Institutional)"],
   ["GET /data/status", "When each dataset last updated"],
 ];
 
@@ -96,8 +102,8 @@ export default function TerminalApp() {
         <header className="space-y-1">
           <h1 className="text-lg font-semibold tracking-tight">HITZ Terminal: live XLM market, leverage and on-chain flow data</h1>
           <p className="text-xs text-muted max-w-3xl leading-relaxed">
-            The Stellar DEX against Kraken and Coinbase, liquidations across every XLM perpetual, order books, labeled whale and exchange flows, and
-            SDF supply. Free an hour behind. Paid plans are live, with alerts to your webhooks and, from Pro, an API.
+            The Stellar DEX against Kraken and Coinbase, liquidations across every XLM perpetual, order books, labeled whale and exchange flows,
+            SDF supply, and Stellar&apos;s own lending: who borrows, and where on-chain liquidations sit. Free an hour behind. Paid plans are live, with alerts to your webhooks and, from Pro, an API.
           </p>
         </header>
 
@@ -120,6 +126,14 @@ export default function TerminalApp() {
             <SdfPanel version={version} plans={plans} />
           </div>
         </div>
+
+        <div className="grid gap-3 lg:grid-cols-3">
+          <DefiPanel version={version} />
+          <LendingPanel version={version} />
+          <AuctionsPanel version={version} />
+        </div>
+
+        <BorrowersPanel version={version} />
 
         <Pricing plans={plans} me={me} onPaid={refresh} />
 
