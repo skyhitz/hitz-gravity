@@ -120,3 +120,53 @@ test("gate: daily series by plan, and unreadable times are refused", () => {
   assert.equal(gate(PLANS.pro, "spreads", { from: "yesterday" }, T0).code, "invalid_time");
   assert.equal(gate(PLANS.pro, "spreads", { resolution: "2m" }, T0).code, "invalid_resolution");
 });
+
+// ─── On-chain lending and the Stellar DeFi map ───────────────────────────────
+
+test("lending datasets: Free sees the DeFi map by day and the auctions an hour behind, a week back", () => {
+  const defi = gate(PLANS.free, "defi", { from: "2021-01-01" }, T0);
+  assert.equal(defi.ok, true);
+  assert.equal(defi.method, "terminalDefi");
+  assert.deepEqual(defi.args, { fromDay: new Date(T0 - 30 * DAY).toISOString().slice(0, 10) });
+  const auctions = gate(PLANS.free, "auctions", { from: String(T0 - 10 * DAY) }, T0);
+  assert.equal(auctions.method, "terminalAuctions");
+  assert.equal(auctions.args.toMs, T0 - 3_600_000);
+  assert.equal(auctions.args.fromMs, T0 - 7 * DAY);
+  assert.equal(auctions.args.fillers, false);
+});
+
+test("lending datasets: lending and the ladder from Trader, the borrower map on Institutional only", () => {
+  for (const [plan, ds, up] of [["free", "lending", "trader"], ["free", "ladder", "trader"], ["free", "borrowers", "institutional"], ["trader", "borrowers", "institutional"], ["pro", "borrowers", "institutional"]]) {
+    const g = gate(PLANS[plan], ds, {}, T0);
+    assert.deepEqual([g.ok, g.status, g.code, g.upgrade], [false, 403, "plan_required", up], `${plan} ${ds}`);
+  }
+  assert.equal(cheapestWith("borrowers"), "institutional");
+  assert.equal(cheapestWith("lending"), "trader");
+  const lending = gate(PLANS.trader, "lending", { resolution: "1h" }, T0);
+  assert.deepEqual([lending.ok, lending.method, lending.args.resolution], [true, "terminalLending", "1h"]);
+  assert.equal(gate(PLANS.pro, "ladder", {}, T0).method, "terminalLadder");
+});
+
+test("lending datasets: the borrower map takes a closed day and at most 5,000 rows", () => {
+  const g = gate(PLANS.institutional, "borrowers", { day: "2025-01-01", limit: "99999" }, T0);
+  assert.equal(g.method, "terminalBorrowers");
+  assert.deepEqual(g.args, { day: "2025-01-01", limit: 5000 });
+  assert.deepEqual(gate(PLANS.institutional, "borrowers", {}, T0).args, { limit: 1000 });
+  assert.deepEqual(gate(PLANS.institutional, "borrowers", { min_debt_usd: "25000" }, T0).args, { limit: 1000, minDebtUsd: 25000 });
+  const bad = gate(PLANS.institutional, "borrowers", { day: "yesterday" }, T0);
+  assert.deepEqual([bad.ok, bad.status, bad.code], [false, 400, "invalid_day"]);
+});
+
+test("lending datasets: who filled an auction shows on Institutional only", () => {
+  assert.equal(gate(PLANS.pro, "auctions", {}, T0).args.fillers, false);
+  assert.equal(gate(PLANS.institutional, "auctions", {}, T0).args.fillers, true);
+});
+
+test("lending datasets: the plans say what they add", () => {
+  const shown = Object.fromEntries(publicPlans().map((p) => [p.id, p]));
+  assert.ok(shown.free.datasets.includes("defi") && shown.free.datasets.includes("auctions"));
+  assert.ok(shown.trader.datasets.includes("lending") && shown.trader.datasets.includes("ladder"));
+  assert.ok(!shown.pro.datasets.includes("borrowers"));
+  assert.ok(shown.institutional.datasets.includes("borrowers"));
+  assert.ok(shown.institutional.features.some((f) => /borrower/i.test(f)));
+});

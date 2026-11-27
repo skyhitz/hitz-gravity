@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createHmac } from "node:crypto";
-import { bodyFor, checkWebhookUrl, CURSOR_KEY, deliverAlerts, signatureHeader, webhookSecret } from "../functions/_lib/terminal/webhooks.ts";
+import { ALERT_KINDS, bodyFor, checkWebhookUrl, CURSOR_KEY, deliverAlerts, signatureHeader, webhookSecret } from "../functions/_lib/terminal/webhooks.ts";
 import { insertWebhook, MAX_FAILURES } from "../functions/_lib/terminal/store.ts";
 import { testDb } from "./helpers/d1.mjs";
 
@@ -116,4 +116,9 @@ test("after a downgrade an account keeps its oldest webhooks only, up to the pla
   const urls = [];
   await deliverAlerts({ db, alerts: async () => alertsAt(T0 - 1000), send: async (u) => (urls.push(u), 204), terminalSecret: SECRET, nowMs: T0 });
   assert.deepEqual(urls, ["https://h0.example.org/x", "https://h1.example.org/x"]);
+});
+
+test("webhooks: subscribers can pick the on-chain lending alerts", () => {
+  assert.ok(ALERT_KINDS.includes("onchain_liquidation"));
+  assert.ok(ALERT_KINDS.includes("debt_near_liquidation"));
 });

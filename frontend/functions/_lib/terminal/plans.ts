@@ -16,7 +16,13 @@ export type Dataset =
   | "sdf"
   | "alerts"
   | "labels"
-  | "status";
+  | "status"
+  // On-chain lending and the Stellar DeFi map (the data worker's src/services/terminalLending.ts).
+  | "defi"
+  | "lending"
+  | "ladder"
+  | "auctions"
+  | "borrowers";
 export type Resolution = "1m" | "5m" | "1h" | "1d";
 
 const MINUTE = 60_000;
@@ -50,8 +56,8 @@ export interface Plan {
   webhooks: number;
 }
 
-const BASE: readonly Dataset[] = ["overview", "spreads", "liquidations", "flows", "transfers", "alerts", "status"];
-const LIVE: readonly Dataset[] = [...BASE, "liquidation_feed", "leverage", "books", "sdf"];
+const BASE: readonly Dataset[] = ["overview", "spreads", "liquidations", "flows", "transfers", "alerts", "status", "defi", "auctions"];
+const LIVE: readonly Dataset[] = [...BASE, "liquidation_feed", "leverage", "books", "sdf", "lending", "ladder"];
 
 export const PLANS: Record<PlanId, Plan> = {
   free: {
@@ -66,6 +72,8 @@ export const PLANS: Record<PlanId, Plan> = {
       "Whale and exchange flows by day, the last 30 days",
       "Transfers of 50M+ XLM",
       "The alert feed, an hour behind",
+      "The Stellar DeFi map by day, the last 30 days",
+      "On-chain liquidations, an hour behind",
     ],
     delayMinutes: 60,
     intradayDays: 7,
@@ -90,6 +98,7 @@ export const PLANS: Record<PlanId, Plan> = {
       "Every Bybit and OKX liquidation as it happens",
       "Open interest, funding, accounts long, order books",
       "SDF's supply to exchanges and its pace",
+      "On-chain lending: Blend's debt, rates and the liquidation ladder",
       "Transfers of 10M+ XLM, labeled",
       "Alerts to 2 webhooks (Discord, Slack or your server)",
     ],
@@ -138,6 +147,8 @@ export const PLANS: Record<PlanId, Plan> = {
       "Everything in Pro",
       "All history at every resolution",
       "The labeled wallet book: exchanges, SDF, custodians, whales",
+      "Every on-chain borrower on Stellar, with collateral, debt and liquidation price",
+      "Every Blend liquidation since 2024, with who filled it",
       "Transfers of 1M+ XLM",
       "API keys (10), 1,200 requests a minute, 1,000,000 a day",
       "Alerts to 20 webhooks",
@@ -146,7 +157,7 @@ export const PLANS: Record<PlanId, Plan> = {
     intradayDays: null,
     dailyDays: null,
     finest: "1m",
-    datasets: [...LIVE, "labels"],
+    datasets: [...LIVE, "labels", "borrowers"],
     minTransferXlm: 1_000_000,
     apiKeys: 10,
     perMinute: 1_200,

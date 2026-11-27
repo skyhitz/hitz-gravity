@@ -11,7 +11,15 @@ import { activeWebhooks, deliveredPairs, getState, plansOf, recordDelivery, setS
 
 export const FORMATS = ["json", "discord", "slack"] as const;
 export type WebhookFormat = (typeof FORMATS)[number];
-export const ALERT_KINDS = ["exchange_deposit", "exchange_withdrawal", "sdf_deposit", "liquidation_burst", "spread_spike"] as const;
+export const ALERT_KINDS = [
+  "exchange_deposit",
+  "exchange_withdrawal",
+  "sdf_deposit",
+  "liquidation_burst",
+  "spread_spike",
+  "onchain_liquidation",
+  "debt_near_liquidation",
+] as const;
 
 export interface Alert {
   id: string;
