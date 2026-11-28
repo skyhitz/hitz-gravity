@@ -216,7 +216,7 @@ const XLM_SAC = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA";
 export function BorrowersPanel({ version }: { version: number }) {
   const res = usePoll<{ day: string | null; rows: BorrowerRow[] }>("borrowers", { limit: 25 }, 600_000, version);
   return (
-    <Panel title="Borrowers" sub="Every on-chain borrower, with collateral, debt and liquidation price" meta={res?.ok ? res.meta : undefined}>
+    <Panel title="Borrowers" sub="Every Blend borrower, with collateral, debt and liquidation price" meta={res?.ok ? res.meta : undefined}>
       <Body res={res} what="The borrower map: each account's debt and liquidation price">
         {(d) =>
           d.rows.length ? (

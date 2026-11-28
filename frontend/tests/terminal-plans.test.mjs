@@ -170,3 +170,12 @@ test("lending datasets: the plans say what they add", () => {
   assert.ok(shown.institutional.datasets.includes("borrowers"));
   assert.ok(shown.institutional.features.some((f) => /borrower/i.test(f)));
 });
+
+test("lending datasets: the copy promises only the lenders measured so far (Blend)", () => {
+  const lines = publicPlans().flatMap((p) => p.features);
+  const borrowers = lines.filter((f) => /borrower/i.test(f));
+  assert.ok(borrowers.length > 0 && borrowers.every((f) => /Blend/.test(f)), borrowers.join(" | "));
+  assert.ok(!lines.some((f) => /every on-chain borrower/i.test(f)));
+  const map = lines.find((f) => /DeFi map/.test(f));
+  assert.match(map ?? "", /Blend/);
+});

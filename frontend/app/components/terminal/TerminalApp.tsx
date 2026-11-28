@@ -32,11 +32,11 @@ const ENDPOINTS: [string, string][] = [
   ["GET /data/sdf?from=2024-01-01", "SDF's supply to exchanges and its pace"],
   ["GET /data/alerts", "Deposits, withdrawals, SDF, liquidation bursts, spread spikes"],
   ["GET /data/labels", "The labeled wallet book (Institutional)"],
-  ["GET /data/defi?from=2026-01-01", "The Stellar DeFi map: each protocol's holdings and debt by day"],
+  ["GET /data/defi?from=2026-01-01", "The Stellar DeFi map: each measured protocol's holdings and debt by day (Blend so far)"],
   ["GET /data/lending?resolution=1h|1d", "Blend's reserves: supplied, borrowed, rates, utilization"],
   ["GET /data/ladder?resolution=1h|1d", "On-chain debt by how far XLM must fall to liquidate it"],
   ["GET /data/auctions?limit=100", "Each Blend liquidation auction (fillers on Institutional)"],
-  ["GET /data/borrowers?day=2026-01-01", "Every on-chain borrower and its liquidation price (Institutional)"],
+  ["GET /data/borrowers?day=2026-01-01", "Every Blend borrower and its liquidation price (Institutional)"],
   ["GET /data/status", "When each dataset last updated"],
 ];
 
