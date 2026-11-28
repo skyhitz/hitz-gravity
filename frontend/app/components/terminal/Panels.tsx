@@ -131,7 +131,7 @@ function Locked({ plan, what }: { plan?: PlanId; what: string }) {
   );
 }
 
-function Body<T>({ res, what, children }: { res: Result<T> | null; what: string; children: (d: T, m: Meta) => ReactNode }) {
+export function Body<T>({ res, what, children }: { res: Result<T> | null; what: string; children: (d: T, m: Meta) => ReactNode }) {
   if (!res) return <div className="shimmer h-24" />;
   if (!res.ok) {
     if (res.status === 403 || res.status === 402) return <Locked plan={res.upgrade} what={what} />;
@@ -140,7 +140,7 @@ function Body<T>({ res, what, children }: { res: Result<T> | null; what: string;
   return <>{children(res.data, res.meta)}</>;
 }
 
-const Row = ({ k, v, cls = "" }: { k: string; v: ReactNode; cls?: string }) => (
+export const Row = ({ k, v, cls = "" }: { k: string; v: ReactNode; cls?: string }) => (
   <div className="flex items-baseline justify-between gap-3 py-0.5">
     <span className="text-[11px] text-muted truncate">{k}</span>
     <span className={`font-mono text-[12px] tabular-nums ${cls}`}>{v}</span>

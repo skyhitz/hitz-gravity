@@ -23,15 +23,22 @@ export const METHOD: Record<Dataset, string> = {
   alerts: "terminalAlerts",
   labels: "terminalLabels",
   status: "terminalStatus",
+  defi: "terminalDefi",
+  lending: "terminalLending",
+  ladder: "terminalLadder",
+  auctions: "terminalAuctions",
+  borrowers: "terminalBorrowers",
 };
 export const DATASETS = Object.keys(METHOD) as Dataset[];
-const BINNED: readonly Dataset[] = ["spreads", "liquidations", "leverage", "books"];
-const EVENTS_LIKE: readonly Dataset[] = ["liquidation_feed", "transfers", "alerts"];
-const DAILY: readonly Dataset[] = ["flows", "sdf"];
+const BINNED: readonly Dataset[] = ["spreads", "liquidations", "leverage", "books", "lending", "ladder"];
+const EVENTS_LIKE: readonly Dataset[] = ["liquidation_feed", "transfers", "alerts", "auctions"];
+const DAILY: readonly Dataset[] = ["flows", "sdf", "defi"];
 /** The window when a request names none, by bin size. */
 const DEFAULT_SPAN: Record<Resolution, number> = { "1m": 6 * 3_600_000, "5m": DAY, "1h": 7 * DAY, "1d": 365 * DAY };
 const RES_ORDER: readonly Resolution[] = ["1m", "5m", "1h", "1d"];
 export const MAX_LIMIT = 500;
+/** The borrower map's page: the data worker returns at most 5,000 rows a call. */
+export const MAX_BORROWERS = 5_000;
 /** The first day any daily series has (flows from 2021, liquidations from 2020). */
 const FIRST_DAY = "2015-01-01";
 
@@ -77,6 +84,18 @@ export function gate(plan: Plan, dataset: string, params: Record<string, string 
 
   if (ds === "overview") return done({ asOfMs: liveTo });
   if (ds === "labels" || ds === "status") return done({});
+  if (ds === "borrowers") {
+    if (params.day !== undefined && params.day !== "" && !/^\d{4}-\d{2}-\d{2}$/.test(params.day)) {
+      return { ok: false, status: 400, code: "invalid_day", message: "day is a closed UTC day, YYYY-MM-DD." };
+    }
+    const n = Number(params.limit ?? 1_000);
+    const args: Record<string, unknown> = {};
+    if (params.day) args.day = params.day;
+    args.limit = Number.isFinite(n) ? Math.max(1, Math.min(MAX_BORROWERS, Math.floor(n))) : 1_000;
+    const minDebt = Number(params.min_debt_usd);
+    if (params.min_debt_usd !== undefined && Number.isFinite(minDebt) && minDebt > 0) args.minDebtUsd = minDebt;
+    return done(args);
+  }
 
   const limit = (() => {
     const n = Number(params.limit ?? 100);
@@ -132,6 +151,8 @@ export function gate(plan: Plan, dataset: string, params: Record<string, string 
     return done({ fromMs, toMs, minXlm, limit });
   }
   if (ds === "liquidation_feed" || ds === "alerts") return done({ fromMs, toMs, limit });
+  // Who filled each auction is the Institutional plan's.
+  if (ds === "auctions") return done({ fromMs, toMs, limit, fillers: plan.id === "institutional" });
   meta.resolution = resolution;
   return done({ fromMs, toMs, resolution });
 }
